@@ -70,8 +70,8 @@ class NetworkTemplate(QuestionTemplate):
 
         if metric == "subnet_count":
             return """Task-Specific Rules (Subnet Count):
-- Score 1.0: Agent provides correct subnet count (within ±3 of actual)
-- Score 0.0: No number or wrong count"""
+- Score 1.0: Agent provides exact subnet count
+- Score 0.0: Wrong count or no number"""
 
         if metric == "current_block":
             return """Task-Specific Rules (Current Block):
@@ -151,12 +151,12 @@ class NetworkTemplate(QuestionTemplate):
                 details="No valid number found",
             )
 
-        # Binary scoring based on tolerance
+        # Binary scoring
         diff = abs(agent_number - ground_truth)
         if metric == "subnet_count":
-            score = 1.0 if diff <= 3 else 0.0
+            score = 1.0 if diff == 0 else 0.0  # Exact match required
         elif metric == "current_block":
-            score = 1.0 if diff <= 200 else 0.0
+            score = 1.0 if diff <= 200 else 0.0  # Block number can vary slightly
         else:
             score = 0.0
 
