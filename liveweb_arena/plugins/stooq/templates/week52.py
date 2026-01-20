@@ -11,6 +11,9 @@ from datetime import datetime, timedelta
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
 )
+from liveweb_arena.core.ground_truth_trigger import (
+    GroundTruthTrigger, UrlPatternTrigger, FetchStrategy
+)
 from .variables import (
     US_STOCKS, INDICES, StockSpec, IndexSpec, InstrumentType,
 )
@@ -77,7 +80,16 @@ class Stooq52WeekTemplate(QuestionTemplate):
     def __init__(self):
         super().__init__("stooq_52week")
 
-    def generate(self, seed: int) -> GeneratedQuestion:
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
+        """
+        Generate a Stooq 52-week question.
+
+        Args:
+            seed: Random seed for reproducible generation
+            variant: Optional variant index for selecting query type.
+                     0=HIGH_PRICE, 1=LOW_PRICE, 2=DISTANCE_FROM_HIGH,
+                     3=DISTANCE_FROM_LOW, 4=CLOSER_TO
+        """
         rng = random.Random(seed)
 
         # Decide stock or index
@@ -94,8 +106,12 @@ class Stooq52WeekTemplate(QuestionTemplate):
             name = instrument.display_name
             inst_type = InstrumentType.INDEX
 
-        # Select query type
-        query_type = rng.choice(list(Week52QueryType))
+        # Select query type (use variant if provided)
+        query_types_list = list(Week52QueryType)
+        if variant is not None:
+            query_type = query_types_list[variant % len(query_types_list)]
+        else:
+            query_type = rng.choice(query_types_list)
 
         # Build question
         patterns = self.PATTERNS[query_type]
@@ -378,3 +394,8 @@ class Stooq52WeekTemplate(QuestionTemplate):
             actual=answer,
             details=f"Difference: {best_diff:.2f}" if best_diff < float('inf') else "No valid number found",
         )
+
+    def get_ground_truth_trigger(self, validation_info: dict) -> tuple:
+        """52-week queries: LAST for multi-stock comparisons."""
+        trigger = UrlPatternTrigger(domains=["stooq.com"])
+        return (trigger, FetchStrategy.LAST)

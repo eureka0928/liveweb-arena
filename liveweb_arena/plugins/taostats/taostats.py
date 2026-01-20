@@ -63,6 +63,7 @@ class TaostatsPlugin(BasePlugin):
         self,
         seed: int,
         template_name: str = None,
+        variant: int = None,
     ) -> SubTask:
         """
         Generate a Taostats query task.
@@ -70,6 +71,7 @@ class TaostatsPlugin(BasePlugin):
         Args:
             seed: Random seed for task generation
             template_name: Specific template to use (e.g., "taostats_subnet_info")
+            variant: Optional variant index for deterministic question type selection
         """
         rng = random.Random(seed)
 
@@ -83,7 +85,7 @@ class TaostatsPlugin(BasePlugin):
             selected_template_name = rng.choice(list(self._template_instances.keys()))
 
         template = self._template_instances[selected_template_name]
-        question = template.generate(seed)
+        question = template.generate(seed, variant=variant)
 
         return SubTask(
             plugin_name=self.name,
@@ -134,3 +136,13 @@ class TaostatsPlugin(BasePlugin):
             return ""
 
         return template.get_validation_rules(validation_info)
+
+    def get_ground_truth_trigger(self, validation_info: dict):
+        """Get trigger from template"""
+        template_name = validation_info.get("template_name")
+        template = self._template_instances.get(template_name)
+
+        if template is None:
+            return None
+
+        return template.get_ground_truth_trigger(validation_info)

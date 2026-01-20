@@ -10,6 +10,9 @@ import csv
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
 )
+from liveweb_arena.core.ground_truth_trigger import (
+    GroundTruthTrigger, UrlPatternTrigger, FetchStrategy
+)
 from .variables import CURRENCIES, CurrencySpec
 
 
@@ -56,14 +59,26 @@ class StooqCurrencyTemplate(QuestionTemplate):
     def __init__(self):
         super().__init__("stooq_currency")
 
-    def generate(self, seed: int) -> GeneratedQuestion:
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
+        """
+        Generate a Stooq currency conversion question.
+
+        Args:
+            seed: Random seed for reproducible generation
+            variant: Optional variant index for selecting conversion direction.
+                     0=BASE_TO_QUOTE, 1=QUOTE_TO_BASE
+        """
         rng = random.Random(seed)
 
         # Select a currency pair
         currency = rng.choice(CURRENCIES)
 
-        # Select conversion direction
-        direction = rng.choice(list(ConversionDirection))
+        # Select conversion direction (use variant if provided)
+        directions_list = list(ConversionDirection)
+        if variant is not None:
+            direction = directions_list[variant % len(directions_list)]
+        else:
+            direction = rng.choice(directions_list)
 
         # Select amount
         amount = rng.choice(AMOUNTS)
@@ -252,3 +267,8 @@ The agent must:
             actual=answer,
             details=f"Difference: {best_diff:.1f}%" if best_diff < float('inf') else "No valid number found",
         )
+
+    def get_ground_truth_trigger(self, validation_info: dict) -> tuple:
+        """Currency queries: FIRST for simple conversion."""
+        trigger = UrlPatternTrigger(domains=["stooq.com"])
+        return (trigger, FetchStrategy.FIRST)

@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
 )
+from liveweb_arena.core.ground_truth_trigger import (
+    GroundTruthTrigger, UrlPatternTrigger, FetchStrategy
+)
 from .variables import _fetch_active_subnet_ids, _fetch_subnet_name
 
 
@@ -54,7 +57,15 @@ class ComparisonTemplate(QuestionTemplate):
     def __init__(self):
         super().__init__("taostats_comparison")
 
-    def generate(self, seed: int) -> GeneratedQuestion:
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
+        """
+        Generate a Taostats comparison question.
+
+        Args:
+            seed: Random seed for reproducible generation
+            variant: Optional variant index for selecting comparison metric.
+                     0=PRICE, 1=TAO_STAKED
+        """
         rng = random.Random(seed)
 
         # Dynamically select two different subnets
@@ -65,7 +76,12 @@ class ComparisonTemplate(QuestionTemplate):
         id1, name1 = selected[0]
         id2, name2 = selected[1]
 
-        metric = rng.choice(list(ComparisonMetric))
+        # Select metric (use variant if provided)
+        metrics_list = list(ComparisonMetric)
+        if variant is not None:
+            metric = metrics_list[variant % len(metrics_list)]
+        else:
+            metric = rng.choice(metrics_list)
         patterns = self.PATTERNS[metric]
         pattern = rng.choice(patterns)
 
@@ -184,3 +200,8 @@ class ComparisonTemplate(QuestionTemplate):
             actual=answer,
             details=f"Expected {ground_truth}",
         )
+
+    def get_ground_truth_trigger(self, validation_info: dict) -> tuple:
+        """Comparison: LAST for multi-page browsing."""
+        trigger = UrlPatternTrigger(domains=["taostats.io"])
+        return (trigger, FetchStrategy.LAST)

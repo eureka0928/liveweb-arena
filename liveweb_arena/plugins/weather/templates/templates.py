@@ -1,12 +1,15 @@
 """Weather question templates for wttr.in"""
 
 import random
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import httpx
 
 from liveweb_arena.core.validators.base import QuestionTemplate, GeneratedQuestion, ValidationResult, register_template
 from liveweb_arena.core.validators.validators import NumericToleranceValidator, BooleanValidator, ExactMatchValidator
+from liveweb_arena.core.ground_truth_trigger import (
+    GroundTruthTrigger, UrlPatternTrigger, FetchStrategy
+)
 from .variables import (
     LocationVariable, DateVariable, WeatherMetricVariable,
     LocationType, MetricType,
@@ -132,8 +135,16 @@ class LocationNameWeatherTemplate(QuestionTemplate):
             ExactMatchValidator(case_sensitive=False)
         )
 
-    def generate(self, seed: int) -> GeneratedQuestion:
-        """Generate a weather question using the given seed"""
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
+        """
+        Generate a weather question using the given seed.
+
+        Args:
+            seed: Random seed for reproducible generation
+            variant: Optional variant index (0-6) for selecting specific metric type.
+                     0=temperature, 1=temperature_high, 2=temperature_low,
+                     3=wind_speed, 4=humidity, 5=precipitation_chance, 6=has_rain
+        """
         rng = random.Random(seed)
 
         # Sample variables
@@ -143,7 +154,12 @@ class LocationNameWeatherTemplate(QuestionTemplate):
 
         location: LocationSpec = location_var.sample(rng)
         date: DateSpec = date_var.sample(rng)
-        metric: MetricSpec = metric_var.sample(rng)
+
+        # Use variant to select specific metric type if provided
+        if variant is not None:
+            metric: MetricSpec = metric_var.sample_by_index(variant)
+        else:
+            metric: MetricSpec = metric_var.sample(rng)
 
         # Build question text
         question_text = self._build_question(location, date, metric, rng)
@@ -338,6 +354,20 @@ class LocationNameWeatherTemplate(QuestionTemplate):
 
         return validator.validate(answer, ground_truth)
 
+    def get_ground_truth_trigger(
+        self,
+        validation_info: Dict[str, Any]
+    ) -> tuple:
+        """
+        Weather data should be fetched when AI visits wttr.in.
+
+        Strategy: FIRST - weather data is relatively stable within a session,
+        first observation is sufficient. We only check domain, not specific
+        location, since the AI might use different URL formats.
+        """
+        trigger = UrlPatternTrigger(domains=["wttr.in"])
+        return (trigger, FetchStrategy.FIRST)
+
 
 class MultiDayQuestionType:
     """Question types for multi-day weather queries"""
@@ -382,24 +412,54 @@ class MultiDayWeatherTemplate(QuestionTemplate):
             BooleanValidator()
         )
 
-    def generate(self, seed: int) -> GeneratedQuestion:
-        """Generate a multi-day weather question"""
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
+        """
+        Generate a multi-day weather question.
+
+        Args:
+            seed: Random seed for reproducible generation
+            variant: Optional variant index for deterministic question type selection.
+                     0: HAS_RAIN (boolean)
+                     1: TEMPERATURE_HIGH + AVERAGE
+                     2: TEMPERATURE_HIGH + DAILY
+                     3: TEMPERATURE_LOW + AVERAGE
+                     4: TEMPERATURE_LOW + DAILY
+        """
         rng = random.Random(seed)
 
         location_var = self._variables["location"]
         metric_var = self._variables["metric"]
 
         location: LocationSpec = location_var.sample(rng)
-        metric: MetricSpec = metric_var.sample(rng)
 
         # Sample number of days (2-3, limited by wttr.in's 3-day forecast)
         num_days = rng.randint(2, 3)
 
-        # For non-boolean metrics, randomly choose between AVERAGE and DAILY
-        if metric.is_boolean:
-            question_type = None  # Boolean questions have their own format
+        # Use variant to select specific metric and question type if provided
+        if variant is not None:
+            variant = variant % 5  # 5 variants total
+            if variant == 0:
+                metric = metric_var.METRICS[MetricType.HAS_RAIN]
+                question_type = None
+            elif variant == 1:
+                metric = metric_var.METRICS[MetricType.TEMPERATURE_HIGH]
+                question_type = MultiDayQuestionType.AVERAGE
+            elif variant == 2:
+                metric = metric_var.METRICS[MetricType.TEMPERATURE_HIGH]
+                question_type = MultiDayQuestionType.DAILY
+            elif variant == 3:
+                metric = metric_var.METRICS[MetricType.TEMPERATURE_LOW]
+                question_type = MultiDayQuestionType.AVERAGE
+            else:  # variant == 4
+                metric = metric_var.METRICS[MetricType.TEMPERATURE_LOW]
+                question_type = MultiDayQuestionType.DAILY
         else:
-            question_type = rng.choice([MultiDayQuestionType.AVERAGE, MultiDayQuestionType.DAILY])
+            metric: MetricSpec = metric_var.sample(rng)
+            # For non-boolean metrics, randomly choose between AVERAGE and DAILY
+            if metric.is_boolean:
+                question_type = None  # Boolean questions have their own format
+            else:
+                question_type = rng.choice([MultiDayQuestionType.AVERAGE, MultiDayQuestionType.DAILY])
 
         # Build question with clear semantics
         question_text = self._build_question(location, metric, num_days, question_type)
@@ -594,3 +654,15 @@ class MultiDayWeatherTemplate(QuestionTemplate):
                 validator = NumericToleranceValidator(2, 5, "°C")
 
         return validator.validate(answer, ground_truth)
+
+    def get_ground_truth_trigger(
+        self,
+        validation_info: Dict[str, Any]
+    ) -> tuple:
+        """
+        Multi-day weather: fetch when AI visits wttr.in.
+
+        Strategy: FIRST - same as single-day weather.
+        """
+        trigger = UrlPatternTrigger(domains=["wttr.in"])
+        return (trigger, FetchStrategy.FIRST)

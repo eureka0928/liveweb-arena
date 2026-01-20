@@ -67,7 +67,7 @@ class BasePlugin(ABC):
         self,
         seed: int,
         template_name: str = None,
-        metric: str = None,
+        variant: int = None,
     ) -> SubTask:
         """
         Generate a sub-task deterministically based on seed.
@@ -75,7 +75,9 @@ class BasePlugin(ABC):
         Args:
             seed: Random seed for deterministic generation
             template_name: Optional specific template to use
-            metric: Optional specific metric/type to query
+            variant: Optional variant index for deterministic question type selection.
+                     If None, random selection is used. If specified, selects a specific
+                     question variant (0-indexed).
 
         Returns:
             SubTask with intent and validation_info
@@ -126,3 +128,17 @@ class BasePlugin(ABC):
             Task-specific validation rules as a string
         """
         return ""  # Default: no specific rules
+
+    def get_ground_truth_trigger(self, validation_info: dict):
+        """
+        Get trigger condition for ground truth fetching.
+
+        Override this method to delegate to template's trigger method.
+
+        Args:
+            validation_info: Parameters for the subtask
+
+        Returns:
+            Tuple of (GroundTruthTrigger, FetchStrategy) or None
+        """
+        return None  # Default: fetch at start (legacy behavior)

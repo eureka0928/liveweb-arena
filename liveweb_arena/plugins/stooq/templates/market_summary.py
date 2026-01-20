@@ -10,6 +10,9 @@ import csv
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
 )
+from liveweb_arena.core.ground_truth_trigger import (
+    GroundTruthTrigger, UrlPatternTrigger, FetchStrategy
+)
 from .variables import INDICES, US_STOCKS
 
 
@@ -65,11 +68,23 @@ class StooqMarketSummaryTemplate(QuestionTemplate):
     def __init__(self):
         super().__init__("stooq_market_summary")
 
-    def generate(self, seed: int) -> GeneratedQuestion:
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
+        """
+        Generate a Stooq market summary question.
+
+        Args:
+            seed: Random seed for reproducible generation
+            variant: Optional variant index for selecting summary type.
+                     0=US_INDICES, 1=TECH_STOCKS, 2=MARKET_TREND
+        """
         rng = random.Random(seed)
 
-        # Select summary type
-        summary_type = rng.choice(list(MarketSummaryType))
+        # Select summary type (use variant if provided)
+        summary_types_list = list(MarketSummaryType)
+        if variant is not None:
+            summary_type = summary_types_list[variant % len(summary_types_list)]
+        else:
+            summary_type = rng.choice(summary_types_list)
 
         # Build question
         patterns = self.PATTERNS[summary_type]
@@ -299,3 +314,8 @@ Key validation points:
             actual=answer,
             details=details,
         )
+
+    def get_ground_truth_trigger(self, validation_info: dict) -> tuple:
+        """Market summary: LAST for multi-page analysis."""
+        trigger = UrlPatternTrigger(domains=["stooq.com"])
+        return (trigger, FetchStrategy.LAST)

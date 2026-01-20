@@ -139,18 +139,22 @@ async def main():
         print("Error: API key required. Set CHUTES_API_KEY or use --api-key")
         sys.exit(1)
 
-    # Parse templates from "plugin/template_name" format
+    # Parse templates from "plugin/template_name[/variant]" format
     def parse_templates(template_strs):
-        """Parse 'plugin/template_name' strings to tuples."""
+        """Parse 'plugin/template_name' or 'plugin/template_name/variant' strings."""
         if not template_strs:
             return None
         result = []
         for t in template_strs:
-            if "/" in t:
-                plugin, name = t.split("/", 1)
-                result.append((plugin, name))
+            parts = t.split("/")
+            if len(parts) == 2:
+                plugin, name = parts
+                result.append((plugin, name, None))
+            elif len(parts) == 3:
+                plugin, name, variant = parts
+                result.append((plugin, name, int(variant)))
             else:
-                raise ValueError(f"Invalid template format: {t}. Use 'plugin/template_name'")
+                raise ValueError(f"Invalid template format: {t}. Use 'plugin/template_name[/variant]'")
         return result
 
     # Prepare config based on task_id and/or seed

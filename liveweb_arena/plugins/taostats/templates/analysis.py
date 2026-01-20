@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
 )
+from liveweb_arena.core.ground_truth_trigger import (
+    GroundTruthTrigger, UrlPatternTrigger, FetchStrategy
+)
 from .variables import _fetch_active_subnet_ids, _fetch_subnet_name
 
 
@@ -74,7 +77,16 @@ class AnalysisTemplate(QuestionTemplate):
     def __init__(self):
         super().__init__("taostats_analysis")
 
-    def generate(self, seed: int) -> GeneratedQuestion:
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
+        """
+        Generate a Taostats analysis question.
+
+        Args:
+            seed: Random seed for reproducible generation
+            variant: Optional variant index for selecting analysis type.
+                     0=HIGHEST_PRICE_TO_STAKE, 1=LOWEST_PRICE_TO_STAKE,
+                     2=HIGHEST_TAO_IN, 3=HIGHEST_PRICE, 4=LOWEST_PRICE
+        """
         rng = random.Random(seed)
 
         # Dynamically select 3-5 subnets for comparison
@@ -84,7 +96,12 @@ class AnalysisTemplate(QuestionTemplate):
             # Fallback if network fetch fails
             selected = [(1, "Subnet 1"), (2, "Subnet 2"), (3, "Subnet 3")]
 
-        analysis_type = rng.choice(list(AnalysisType))
+        # Select analysis type (use variant if provided)
+        analysis_types_list = list(AnalysisType)
+        if variant is not None:
+            analysis_type = analysis_types_list[variant % len(analysis_types_list)]
+        else:
+            analysis_type = rng.choice(analysis_types_list)
         patterns = self.PATTERNS[analysis_type]
         pattern = rng.choice(patterns)
 
@@ -223,3 +240,8 @@ class AnalysisTemplate(QuestionTemplate):
             actual=answer,
             details="Wrong subnet or not found in answer",
         )
+
+    def get_ground_truth_trigger(self, validation_info: dict) -> tuple:
+        """Analysis: LAST for multi-page analysis."""
+        trigger = UrlPatternTrigger(domains=["taostats.io"])
+        return (trigger, FetchStrategy.LAST)

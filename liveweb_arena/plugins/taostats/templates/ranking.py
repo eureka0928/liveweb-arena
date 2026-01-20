@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
 )
+from liveweb_arena.core.ground_truth_trigger import (
+    GroundTruthTrigger, UrlPatternTrigger, FetchStrategy
+)
 
 
 class RankingMetric(Enum):
@@ -67,10 +70,23 @@ class RankingTemplate(QuestionTemplate):
     def __init__(self):
         super().__init__("taostats_ranking")
 
-    def generate(self, seed: int) -> GeneratedQuestion:
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
+        """
+        Generate a Taostats ranking question.
+
+        Args:
+            seed: Random seed for reproducible generation
+            variant: Optional variant index for selecting ranking metric.
+                     0=MARKET_CAP, 1=PRICE, 2=TAO_STAKED
+        """
         rng = random.Random(seed)
 
-        metric = rng.choice(list(RankingMetric))
+        # Select metric (use variant if provided)
+        metrics_list = list(RankingMetric)
+        if variant is not None:
+            metric = metrics_list[variant % len(metrics_list)]
+        else:
+            metric = rng.choice(metrics_list)
         position = rng.choice(list(RankPosition))
         patterns = self.PATTERNS[metric]
         pattern = rng.choice(patterns)
@@ -208,3 +224,8 @@ the expected subnet or is within ±1 rank position."""
             actual=answer,
             details=f"Expected {expected_name} at specified rank",
         )
+
+    def get_ground_truth_trigger(self, validation_info: dict) -> tuple:
+        """Ranking: LAST for multi-page ranking queries."""
+        trigger = UrlPatternTrigger(domains=["taostats.io"])
+        return (trigger, FetchStrategy.LAST)

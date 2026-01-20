@@ -44,7 +44,8 @@ class TaskManager:
         Args:
             seed: Random seed for deterministic generation
             num_subtasks: Number of sub-tasks (1-4)
-            templates: List of (plugin, template_name) tuples; None = random
+            templates: List of (plugin, template_name, variant) tuples; None = random.
+                       variant can be None for random selection or int for specific variant.
 
         Returns:
             CompositeTask with subtasks and combined_intent
@@ -55,29 +56,37 @@ class TaskManager:
         # Initialize RNG with seed for deterministic generation
         rng = random.Random(seed)
 
-        # Build list of (plugin_name, template_name) for each subtask
+        # Build list of (plugin_name, template_name, variant) for each subtask
         if templates:
             # Use specified templates (cycle if not enough)
+            # Normalize to 3-element tuples
             selected_templates = []
             for i in range(num_subtasks):
-                selected_templates.append(templates[i % len(templates)])
+                t = templates[i % len(templates)]
+                if len(t) == 2:
+                    # (plugin, template_name) -> (plugin, template_name, None)
+                    selected_templates.append((t[0], t[1], None))
+                else:
+                    # Already (plugin, template_name, variant)
+                    selected_templates.append(t)
         else:
-            # Random selection from available plugins (no specific template)
+            # Random selection from available plugins (no specific template or variant)
             available = list(self._plugin_classes.keys())
             if len(available) == 0:
                 raise ValueError("No plugins available")
-            selected_templates = [(rng.choice(available), None) for _ in range(num_subtasks)]
+            selected_templates = [(rng.choice(available), None, None) for _ in range(num_subtasks)]
 
         # Generate sub-tasks
         subtasks: List[SubTask] = []
 
-        for i, (plugin_name, template_name) in enumerate(selected_templates):
+        for i, (plugin_name, template_name, variant) in enumerate(selected_templates):
             plugin = self._get_plugin(plugin_name)
             # Derive seed for this sub-task
             subtask_seed = seed + i * 1000
             subtask = await plugin.generate_task(
                 subtask_seed,
                 template_name=template_name,
+                variant=variant,
             )
             # Override answer_tag
             subtask.answer_tag = f"answer{i + 1}"

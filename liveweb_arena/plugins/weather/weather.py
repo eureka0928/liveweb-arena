@@ -69,6 +69,7 @@ class WeatherPlugin(BasePlugin):
         self,
         seed: int,
         template_name: str = None,
+        variant: int = None,
     ) -> SubTask:
         """Generate a weather query task using templates"""
         rng = random.Random(seed)
@@ -80,8 +81,8 @@ class WeatherPlugin(BasePlugin):
             selected_template_name = rng.choice(list(self._template_instances.keys()))
         template = self._template_instances[selected_template_name]
 
-        # Generate question using template
-        question: GeneratedQuestion = template.generate(seed)
+        # Generate question using template (pass variant for deterministic selection)
+        question: GeneratedQuestion = template.generate(seed, variant=variant)
 
         # Convert to SubTask (no start_url - Agent decides navigation)
         return SubTask(
@@ -137,6 +138,16 @@ class WeatherPlugin(BasePlugin):
             template = list(self._template_instances.values())[0]
 
         return template.get_validation_rules(validation_info)
+
+    def get_ground_truth_trigger(self, validation_info: dict):
+        """Get trigger from the appropriate template"""
+        template_name = validation_info.get("template_name", "location_name")
+        template = self._template_instances.get(template_name)
+
+        if template is None:
+            template = list(self._template_instances.values())[0]
+
+        return template.get_ground_truth_trigger(validation_info)
 
     def register_template(self, name: str, template_class: Type[QuestionTemplate]):
         """

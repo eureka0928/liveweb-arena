@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
 )
+from liveweb_arena.core.ground_truth_trigger import (
+    GroundTruthTrigger, UrlPatternTrigger, FetchStrategy
+)
 
 
 class NetworkMetric(Enum):
@@ -46,10 +49,23 @@ class NetworkTemplate(QuestionTemplate):
     def __init__(self):
         super().__init__("taostats_network")
 
-    def generate(self, seed: int) -> GeneratedQuestion:
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
+        """
+        Generate a Taostats network question.
+
+        Args:
+            seed: Random seed for reproducible generation
+            variant: Optional variant index for selecting network metric.
+                     0=SUBNET_COUNT, 1=CURRENT_BLOCK
+        """
         rng = random.Random(seed)
 
-        metric = rng.choice(list(NetworkMetric))
+        # Select metric (use variant if provided)
+        metrics_list = list(NetworkMetric)
+        if variant is not None:
+            metric = metrics_list[variant % len(metrics_list)]
+        else:
+            metric = rng.choice(metrics_list)
         patterns = self.PATTERNS[metric]
         question_text = rng.choice(patterns)
 
@@ -167,3 +183,8 @@ class NetworkTemplate(QuestionTemplate):
             actual=str(agent_number),
             details=f"Difference: {abs(agent_number - ground_truth)}",
         )
+
+    def get_ground_truth_trigger(self, validation_info: dict) -> tuple:
+        """Taostats network: trigger when AI visits taostats.io."""
+        trigger = UrlPatternTrigger(domains=["taostats.io"])
+        return (trigger, FetchStrategy.FIRST)

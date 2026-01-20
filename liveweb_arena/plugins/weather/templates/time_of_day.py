@@ -1,12 +1,13 @@
 """Time-of-day weather query template"""
 
 import random
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import httpx
 
 from liveweb_arena.core.validators.base import QuestionTemplate, GeneratedQuestion, ValidationResult, register_template
 from liveweb_arena.core.validators.validators import NumericToleranceValidator
+from liveweb_arena.core.ground_truth_trigger import UrlPatternTrigger, FetchStrategy
 from .variables import (
     LocationVariable, DateVariable, WeatherMetricVariable, TimeOfDayVariable,
     LocationType, MetricType, DateType,
@@ -59,13 +60,26 @@ class TimeOfDayWeatherTemplate(QuestionTemplate):
                 unit=spec.unit,
             ))
 
-    def generate(self, seed: int) -> GeneratedQuestion:
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
+        """
+        Generate a time-of-day weather question.
+
+        Args:
+            seed: Random seed for reproducible generation
+            variant: Optional variant index (0-3) for selecting specific metric type.
+                     0=temperature, 1=feels_like, 2=wind_speed, 3=humidity
+        """
         rng = random.Random(seed)
 
         location: LocationSpec = self._variables["location"].sample(rng)
         date: DateSpec = self._variables["date"].sample(rng)
         time_of_day: TimeOfDaySpec = self._variables["time_of_day"].sample(rng)
-        metric: MetricSpec = self._variables["metric"].sample(rng)
+
+        # Use variant to select specific metric type if provided
+        if variant is not None:
+            metric: MetricSpec = self._variables["metric"].sample_by_index(variant)
+        else:
+            metric: MetricSpec = self._variables["metric"].sample(rng)
 
         # Build question
         question_text = self._build_question(location, date, time_of_day, metric, rng)
@@ -186,3 +200,12 @@ class TimeOfDayWeatherTemplate(QuestionTemplate):
             validator = NumericToleranceValidator(2, 5, validation_info.get("unit", ""))
 
         return validator.validate(answer, ground_truth)
+
+    def get_ground_truth_trigger(self, validation_info: Dict[str, Any]) -> tuple:
+        """
+        Time-of-day weather: fetch when AI visits wttr.in.
+
+        Strategy: FIRST - same as other weather templates.
+        """
+        trigger = UrlPatternTrigger(domains=["wttr.in"])
+        return (trigger, FetchStrategy.FIRST)

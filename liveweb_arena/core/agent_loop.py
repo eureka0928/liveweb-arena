@@ -1,12 +1,16 @@
 """Agent loop for browser-based task execution"""
 
-from typing import Any, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 from .browser import BrowserSession
 from .models import BrowserAction, CompositeTask, TrajectoryStep
 from .agent_policy import AgentPolicy
 from ..utils.llm_client import LLMClient
 from ..utils.logger import log
+
+
+# Type for navigation callback: async (url: str) -> None
+NavigationCallback = Callable[[str], Any]
 
 
 class AgentLoop:
@@ -22,11 +26,13 @@ class AgentLoop:
         llm_client: LLMClient,
         policy: AgentPolicy,
         max_steps: int = 30,
+        on_navigation: Optional[NavigationCallback] = None,
     ):
         self._session = session
         self._llm_client = llm_client
         self._policy = policy
         self._max_steps = max_steps
+        self._on_navigation = on_navigation
 
         # Internal state for partial recovery
         self._trajectory: List[TrajectoryStep] = []
@@ -142,8 +148,16 @@ class AgentLoop:
             else:
                 log("Agent", f"Action: {action.action_type}")
                 try:
+                    old_url = obs.url if obs else None
                     obs = await self._session.execute_action(action)
                     action_result = "Success"
+
+                    # Fire navigation callback if URL changed
+                    if self._on_navigation and obs.url != old_url:
+                        try:
+                            await self._on_navigation(obs.url)
+                        except Exception as e:
+                            log("Agent", f"Navigation callback error: {e}")
                 except Exception as e:
                     action_result = f"Failed: {e}"
 

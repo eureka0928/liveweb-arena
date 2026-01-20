@@ -10,6 +10,9 @@ import csv
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
 )
+from liveweb_arena.core.ground_truth_trigger import (
+    GroundTruthTrigger, UrlPatternTrigger, FetchStrategy
+)
 from .variables import (
     StockVariable, IndexVariable, US_STOCKS, INDICES,
     StockSpec, IndexSpec, InstrumentType,
@@ -66,7 +69,16 @@ class StooqComparisonTemplate(QuestionTemplate):
     def __init__(self):
         super().__init__("stooq_comparison")
 
-    def generate(self, seed: int) -> GeneratedQuestion:
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
+        """
+        Generate a Stooq comparison question.
+
+        Args:
+            seed: Random seed for reproducible generation
+            variant: Optional variant index for selecting comparison type.
+                     0=HIGHER_PRICE, 1=LOWER_PRICE, 2=BETTER_PERFORMANCE,
+                     3=WORSE_PERFORMANCE, 4=HIGHER_VOLUME
+        """
         rng = random.Random(seed)
 
         # Decide whether to compare stocks or indices
@@ -86,8 +98,13 @@ class StooqComparisonTemplate(QuestionTemplate):
             names = [i.display_name for i in instruments]
             inst_type = InstrumentType.INDEX
 
-        # Select comparison type
-        comparison_type = rng.choice(list(ComparisonType))
+        # Select comparison type (use variant if provided)
+        comparison_types_list = list(ComparisonType)
+        if variant is not None:
+            comparison_type = comparison_types_list[variant % len(comparison_types_list)]
+        else:
+            comparison_type = rng.choice(comparison_types_list)
+
         if comparison_type == ComparisonType.HIGHER_VOLUME:
             # Volume comparison only for stocks
             if not compare_stocks:
@@ -276,3 +293,16 @@ class StooqComparisonTemplate(QuestionTemplate):
             actual=answer,
             details=f"Expected {winner_name} but not found in answer",
         )
+
+    def get_ground_truth_trigger(
+        self,
+        validation_info: Dict[str, Any]
+    ) -> tuple:
+        """
+        Comparison: AI visits multiple stock pages, use LAST.
+
+        Strategy: LAST - AI gathers data from multiple pages,
+        last fetch is closest to answer submission.
+        """
+        trigger = UrlPatternTrigger(domains=["stooq.com"])
+        return (trigger, FetchStrategy.LAST)

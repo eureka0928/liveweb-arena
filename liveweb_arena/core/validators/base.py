@@ -3,8 +3,11 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Callable, Type
+from typing import Any, Dict, List, Optional, Callable, Type, TYPE_CHECKING
 import random
+
+if TYPE_CHECKING:
+    from ..ground_truth_trigger import GroundTruthTrigger, FetchStrategy
 
 
 # Global template registry
@@ -184,12 +187,15 @@ class QuestionTemplate(ABC):
         self._validators[metric_name] = validator
 
     @abstractmethod
-    def generate(self, seed: int) -> GeneratedQuestion:
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
         """
         Generate a question using the given seed.
 
         Args:
             seed: Random seed for reproducible generation
+            variant: Optional variant index for deterministic question type selection.
+                     If None, random selection is used. If specified, selects a specific
+                     question variant (0-indexed).
 
         Returns:
             GeneratedQuestion with all metadata
@@ -258,6 +264,30 @@ class QuestionTemplate(ABC):
         """
         # Default: 10 steps for simple questions
         return 10
+
+    def get_ground_truth_trigger(
+        self,
+        validation_info: Dict[str, Any]
+    ) -> tuple:
+        """
+        Get the trigger condition for fetching ground truth.
+
+        Each template should override this to specify when ground truth
+        should be fetched during AI navigation. The trigger should be
+        unavoidable for task completion.
+
+        Args:
+            validation_info: Information about the question
+
+        Returns:
+            Tuple of (GroundTruthTrigger, FetchStrategy)
+            - GroundTruthTrigger: When to fetch
+            - FetchStrategy: FIRST, LAST, or ALL
+
+        Default: Returns None, meaning ground truth is fetched at start
+        (legacy behavior for templates that don't implement this)
+        """
+        return None
 
     def _sample_variables(self, rng: random.Random) -> Dict[str, Any]:
         """Sample all registered variables"""

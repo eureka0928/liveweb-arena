@@ -9,6 +9,9 @@ import csv
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
 )
+from liveweb_arena.core.ground_truth_trigger import (
+    GroundTruthTrigger, UrlPatternTrigger, FetchStrategy
+)
 from .variables import (
     StockVariable, IndexVariable, CurrencyVariable, CommodityVariable,
     PriceMetricVariable, StockSpec, IndexSpec, CurrencySpec, CommoditySpec,
@@ -86,11 +89,22 @@ class StooqPriceTemplate(QuestionTemplate):
         self.register_variable(CommodityVariable())
         self.register_variable(PriceMetricVariable())
 
-    def generate(self, seed: int) -> GeneratedQuestion:
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
+        """
+        Generate a Stooq price question.
+
+        Args:
+            seed: Random seed for reproducible generation
+            variant: Optional variant index for selecting instrument type.
+                     0=STOCK, 1=INDEX (within allowed instrument_types)
+        """
         rng = random.Random(seed)
 
-        # Select instrument type
-        inst_type = rng.choice(self.instrument_types)
+        # Select instrument type (use variant if provided)
+        if variant is not None and self.instrument_types:
+            inst_type = self.instrument_types[variant % len(self.instrument_types)]
+        else:
+            inst_type = rng.choice(self.instrument_types)
 
         # Sample metric first to determine patterns
         metric: MetricSpec = self._variables["metric"].sample(rng)
@@ -322,3 +336,15 @@ class StooqPriceTemplate(QuestionTemplate):
             actual=f"{actual:.2f}",
             details=f"Outside tolerance (diff: {diff:.4f})",
         )
+
+    def get_ground_truth_trigger(
+        self,
+        validation_info: Dict[str, Any]
+    ) -> tuple:
+        """
+        Stooq price: fetch when AI visits stooq.com.
+
+        Strategy: FIRST - single stock price is stable within session.
+        """
+        trigger = UrlPatternTrigger(domains=["stooq.com"])
+        return (trigger, FetchStrategy.FIRST)

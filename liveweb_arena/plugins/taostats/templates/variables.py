@@ -142,6 +142,19 @@ class MetricVariable(Variable):
         metric_type = rng.choice(self.allowed_metrics)
         return self.METRICS[metric_type]
 
+    def sample_by_index(self, index: int) -> MetricSpec:
+        """
+        Sample a specific metric by index.
+
+        Args:
+            index: Index into allowed_metrics list (0-based, wraps around)
+
+        Returns:
+            MetricSpec for the selected metric
+        """
+        metric_type = self.allowed_metrics[index % len(self.allowed_metrics)]
+        return self.METRICS[metric_type]
+
     def get_display_value(self, value: MetricSpec) -> str:
         return value.display_name
 

@@ -11,6 +11,9 @@ import csv
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
 )
+from liveweb_arena.core.ground_truth_trigger import (
+    GroundTruthTrigger, UrlPatternTrigger, FetchStrategy
+)
 
 
 class RankingMetric(Enum):
@@ -143,15 +146,27 @@ class StooqRankingTemplate(QuestionTemplate):
     def __init__(self):
         super().__init__("stooq_ranking")
 
-    def generate(self, seed: int) -> GeneratedQuestion:
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
+        """
+        Generate a Stooq ranking question.
+
+        Args:
+            seed: Random seed for reproducible generation
+            variant: Optional variant index for selecting ranking metric.
+                     0=CHANGE_PERCENT, 1=CURRENT_PRICE, 2=WEEK52_GAIN, 3=DISTANCE_FROM_HIGH
+        """
         rng = random.Random(seed)
 
         # Select instrument group
         group_key = rng.choice(list(INSTRUMENT_GROUPS.keys()))
         group_desc, instruments = INSTRUMENT_GROUPS[group_key]
 
-        # Select metric
-        metric = rng.choice(list(RankingMetric))
+        # Select metric (use variant if provided)
+        metrics_list = list(RankingMetric)
+        if variant is not None:
+            metric = metrics_list[variant % len(metrics_list)]
+        else:
+            metric = rng.choice(metrics_list)
 
         # Select ranking direction and position
         direction = rng.choice(["highest", "lowest"])
@@ -425,3 +440,10 @@ The agent must:
             actual=answer,
             details="Correct instrument identified" if is_correct else f"Expected: {ground_truth}",
         )
+
+    def get_ground_truth_trigger(self, validation_info: dict) -> tuple:
+        """
+        Ranking: AI visits multiple stock pages, use LAST.
+        """
+        trigger = UrlPatternTrigger(domains=["stooq.com"])
+        return (trigger, FetchStrategy.LAST)

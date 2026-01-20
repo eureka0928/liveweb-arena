@@ -7,6 +7,9 @@ import aiohttp
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
 )
+from liveweb_arena.core.ground_truth_trigger import (
+    GroundTruthTrigger, UrlPatternTrigger, FetchStrategy
+)
 
 
 @register_template("taostats_price")
@@ -34,9 +37,19 @@ class PriceTemplate(QuestionTemplate):
     def __init__(self):
         super().__init__("taostats_price")
 
-    def generate(self, seed: int) -> GeneratedQuestion:
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
+        """
+        Generate a Taostats price question.
+
+        Args:
+            seed: Random seed for reproducible generation
+            variant: Optional variant index for selecting question pattern
+        """
         rng = random.Random(seed)
-        question_text = rng.choice(self.PATTERNS)
+        if variant is not None:
+            question_text = self.PATTERNS[variant % len(self.PATTERNS)]
+        else:
+            question_text = rng.choice(self.PATTERNS)
 
         return GeneratedQuestion(
             question_text=question_text,
@@ -126,3 +139,8 @@ class PriceTemplate(QuestionTemplate):
             actual=f"${agent_price:.2f}",
             details=f"Difference: {pct_diff:.1f}%",
         )
+
+    def get_ground_truth_trigger(self, validation_info: dict) -> tuple:
+        """TAO price: trigger when AI visits taostats.io."""
+        trigger = UrlPatternTrigger(domains=["taostats.io"])
+        return (trigger, FetchStrategy.FIRST)

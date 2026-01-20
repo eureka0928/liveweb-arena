@@ -66,6 +66,7 @@ class StooqPlugin(BasePlugin):
         self,
         seed: int,
         template_name: str = None,
+        variant: int = None,
     ) -> SubTask:
         """
         Generate a Stooq query task.
@@ -73,6 +74,7 @@ class StooqPlugin(BasePlugin):
         Args:
             seed: Random seed for task generation
             template_name: Specific template to use (e.g., "stooq_price")
+            variant: Optional variant index for deterministic question type selection
         """
         rng = random.Random(seed)
 
@@ -87,8 +89,8 @@ class StooqPlugin(BasePlugin):
 
         template = self._template_instances[selected_template_name]
 
-        # Generate question
-        question = template.generate(seed)
+        # Generate question (pass variant for deterministic selection)
+        question = template.generate(seed, variant=variant)
 
         return SubTask(
             plugin_name=self.name,
@@ -140,3 +142,13 @@ class StooqPlugin(BasePlugin):
             return ""
 
         return template.get_validation_rules(validation_info)
+
+    def get_ground_truth_trigger(self, validation_info: dict):
+        """Get trigger from template"""
+        template_name = validation_info.get("template_name")
+        template = self._template_instances.get(template_name)
+
+        if template is None:
+            return None
+
+        return template.get_ground_truth_trigger(validation_info)

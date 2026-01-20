@@ -11,6 +11,9 @@ import csv
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
 )
+from liveweb_arena.core.ground_truth_trigger import (
+    GroundTruthTrigger, UrlPatternTrigger, FetchStrategy
+)
 from .variables import (
     StockVariable, IndexVariable, US_STOCKS, INDICES,
     StockSpec, IndexSpec, InstrumentType,
@@ -68,7 +71,15 @@ class StooqHistoricalTemplate(QuestionTemplate):
         self.register_variable(StockVariable())
         self.register_variable(IndexVariable())
 
-    def generate(self, seed: int) -> GeneratedQuestion:
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
+        """
+        Generate a Stooq historical question.
+
+        Args:
+            seed: Random seed for reproducible generation
+            variant: Optional variant index for selecting query type.
+                     0=HIGHEST_CLOSE, 1=LOWEST_CLOSE, 2=AVERAGE_CLOSE, 3=PRICE_RANGE
+        """
         rng = random.Random(seed)
 
         # Decide stock or index
@@ -85,13 +96,17 @@ class StooqHistoricalTemplate(QuestionTemplate):
             name = instrument.display_name
             inst_type = InstrumentType.INDEX
 
-        # Select query type
-        query_type = rng.choice([
+        # Select query type (use variant if provided)
+        query_types_list = [
             HistoricalQueryType.HIGHEST_CLOSE,
             HistoricalQueryType.LOWEST_CLOSE,
             HistoricalQueryType.AVERAGE_CLOSE,
             HistoricalQueryType.PRICE_RANGE,
-        ])
+        ]
+        if variant is not None:
+            query_type = query_types_list[variant % len(query_types_list)]
+        else:
+            query_type = rng.choice(query_types_list)
 
         # Select number of days (3-10 trading days)
         num_days = rng.randint(3, 10)
@@ -271,3 +286,8 @@ class StooqHistoricalTemplate(QuestionTemplate):
             actual=f"{actual:.2f}",
             details=f"Outside 2% tolerance (diff: {diff:.4f})",
         )
+
+    def get_ground_truth_trigger(self, validation_info: dict) -> tuple:
+        """Historical queries: FIRST for single stock lookups."""
+        trigger = UrlPatternTrigger(domains=["stooq.com"])
+        return (trigger, FetchStrategy.FIRST)

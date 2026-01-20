@@ -11,6 +11,9 @@ import csv
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
 )
+from liveweb_arena.core.ground_truth_trigger import (
+    GroundTruthTrigger, UrlPatternTrigger, FetchStrategy
+)
 
 
 class ComparisonMetric(Enum):
@@ -117,11 +120,22 @@ class StooqSectorAnalysisTemplate(QuestionTemplate):
     def __init__(self):
         super().__init__("stooq_sector_analysis")
 
-    def generate(self, seed: int) -> GeneratedQuestion:
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
+        """
+        Generate a Stooq sector analysis question.
+
+        Args:
+            seed: Random seed for reproducible generation
+            variant: Optional variant index for selecting question type.
+                     0=stocks comparison, 1=indices comparison
+        """
         rng = random.Random(seed)
 
-        # Decide: stocks or indices
-        use_indices = rng.random() < 0.3  # 30% chance for indices
+        # Decide: stocks or indices (use variant if provided)
+        if variant is not None:
+            use_indices = (variant % 2) == 1
+        else:
+            use_indices = rng.random() < 0.3  # 30% chance for indices
 
         if use_indices:
             return self._generate_index_question(rng)
@@ -488,3 +502,13 @@ The agent MUST report individual percentage changes for verification."""
             return 0.5, f"{name}: ~ ({reported:+.2f}% vs {expected:+.2f}%)"
         else:
             return 0.0, f"{name}: ✗ ({reported:+.2f}% vs {expected:+.2f}%)"
+
+    def get_ground_truth_trigger(self, validation_info: dict) -> tuple:
+        """
+        Sector analysis: AI visits multiple pages, use ALL for range.
+
+        Strategy: ALL - capture data across multiple page visits to
+        account for real-time fluctuations.
+        """
+        trigger = UrlPatternTrigger(domains=["stooq.com"])
+        return (trigger, FetchStrategy.ALL)

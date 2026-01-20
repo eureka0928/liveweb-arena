@@ -7,6 +7,9 @@ from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template
 )
 from liveweb_arena.core.validators.validators import NumericToleranceValidator, ExactMatchValidator
+from liveweb_arena.core.ground_truth_trigger import (
+    GroundTruthTrigger, UrlPatternTrigger, FetchStrategy
+)
 from .variables import SubnetVariable, MetricVariable, SubnetSpec, MetricSpec, SubnetMetric
 
 
@@ -58,11 +61,24 @@ class SubnetInfoTemplate(QuestionTemplate):
             full_tolerance=0.0001, partial_tolerance=0.001, unit="τ"
         ))
 
-    def generate(self, seed: int) -> GeneratedQuestion:
+    def generate(self, seed: int, variant: Optional[int] = None) -> GeneratedQuestion:
+        """
+        Generate a Taostats subnet info question.
+
+        Args:
+            seed: Random seed for reproducible generation
+            variant: Optional variant index for selecting metric type.
+                     0=NAME, 1=OWNER, 2=PRICE
+        """
         rng = random.Random(seed)
 
         subnet: SubnetSpec = self._variables["subnet"].sample(rng)
-        metric: MetricSpec = self._variables["metric"].sample(rng)
+
+        # Use variant to select specific metric if provided
+        if variant is not None:
+            metric: MetricSpec = self._variables["metric"].sample_by_index(variant)
+        else:
+            metric: MetricSpec = self._variables["metric"].sample(rng)
 
         patterns = self.PATTERNS.get(metric.metric, ["{subnet}?"])
         pattern = rng.choice(patterns)
@@ -169,3 +185,8 @@ Agent should click the address to get the full address from the URL or account p
             )
 
         return validator.validate(answer, ground_truth)
+
+    def get_ground_truth_trigger(self, validation_info: dict) -> tuple:
+        """Taostats subnet: trigger when AI visits taostats.io."""
+        trigger = UrlPatternTrigger(domains=["taostats.io"])
+        return (trigger, FetchStrategy.FIRST)
