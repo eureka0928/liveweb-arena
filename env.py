@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Type
 from liveweb_arena.core.browser import BrowserEngine
 from liveweb_arena.core.task_manager import TaskManager
 from liveweb_arena.core.agent_policy import AgentPolicy
-from liveweb_arena.core.agent_loop import AgentLoop
+from liveweb_arena.core.agent_loop import AgentLoop, BrowserFatalError
 from liveweb_arena.core.parser import AnswerParser
 from liveweb_arena.core.ground_truth_trigger import GroundTruthManager, FetchStrategy
 from liveweb_arena.plugins.base import BasePlugin
@@ -234,7 +234,7 @@ class Actor:
 
             # Track failure reasons
             failure_reason = None
-            llm_error_message = None
+            fatal_error_message = None
 
             try:
                 trajectory, final_answer, usage = await asyncio.wait_for(
@@ -253,8 +253,15 @@ class Actor:
                 usage = agent_loop.get_usage()
             except LLMFatalError as e:
                 failure_reason = "llm_error"
-                llm_error_message = str(e)
+                fatal_error_message = str(e)
                 log("Actor", f"LLM fatal error: {e}", force=True)
+                trajectory = agent_loop.get_trajectory()
+                final_answer = agent_loop.get_final_answer()
+                usage = agent_loop.get_usage()
+            except BrowserFatalError as e:
+                failure_reason = "browser_error"
+                fatal_error_message = str(e)
+                log("Actor", f"Browser fatal error: {e}", force=True)
                 trajectory = agent_loop.get_trajectory()
                 final_answer = agent_loop.get_final_answer()
                 usage = agent_loop.get_usage()

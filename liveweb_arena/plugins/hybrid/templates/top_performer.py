@@ -1,12 +1,8 @@
 """Top Performer Search - RL-friendly cross-site optimization task"""
 
-import csv
-import io
 import random
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
-
-import aiohttp
 
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
@@ -14,7 +10,7 @@ from liveweb_arena.core.validators.base import (
 from liveweb_arena.core.ground_truth_trigger import (
     UrlPatternTrigger, FetchStrategy, TriggerConfig, GroundTruthResult,
 )
-from liveweb_arena.plugins.coingecko.api_client import CoinGeckoClient
+from ..utils import get_crypto_24h_change, get_stooq_24h_change
 
 
 @dataclass
@@ -36,19 +32,41 @@ CRYPTO_ASSETS = [
     AssetSpec("dogecoin", "Dogecoin", "coingecko", ""),
     AssetSpec("avalanche-2", "Avalanche", "coingecko", ""),
     AssetSpec("polkadot", "Polkadot", "coingecko", ""),
+    AssetSpec("chainlink", "Chainlink", "coingecko", ""),
+    AssetSpec("litecoin", "Litecoin", "coingecko", ""),
+    AssetSpec("uniswap", "Uniswap", "coingecko", ""),
+    AssetSpec("stellar", "Stellar", "coingecko", ""),
+    AssetSpec("cosmos", "Cosmos", "coingecko", ""),
+    AssetSpec("near", "NEAR", "coingecko", ""),
+    AssetSpec("aptos", "Aptos", "coingecko", ""),
+    AssetSpec("sui", "Sui", "coingecko", ""),
+    AssetSpec("bittensor", "TAO", "coingecko", ""),
 ]
 
 TRADITIONAL_ASSETS = [
+    # Commodities
     AssetSpec("gc.f", "Gold", "stooq", "gc.f"),
     AssetSpec("si.f", "Silver", "stooq", "si.f"),
     AssetSpec("cl.f", "Crude Oil", "stooq", "cl.f"),
+    AssetSpec("ng.f", "Natural Gas", "stooq", "ng.f"),
+    AssetSpec("hg.f", "Copper", "stooq", "hg.f"),
+    # Indices
     AssetSpec("^spx", "S&P 500", "stooq", "^spx"),
     AssetSpec("^dji", "Dow Jones", "stooq", "^dji"),
     AssetSpec("^ndx", "NASDAQ 100", "stooq", "^ndx"),
-    AssetSpec("aapl.us", "Apple stock", "stooq", "aapl.us"),
-    AssetSpec("msft.us", "Microsoft stock", "stooq", "msft.us"),
-    AssetSpec("nvda.us", "NVIDIA stock", "stooq", "nvda.us"),
-    AssetSpec("tsla.us", "Tesla stock", "stooq", "tsla.us"),
+    AssetSpec("^dax", "DAX", "stooq", "^dax"),
+    AssetSpec("^ukx", "FTSE 100", "stooq", "^ukx"),
+    # US Stocks
+    AssetSpec("aapl.us", "Apple", "stooq", "aapl.us"),
+    AssetSpec("msft.us", "Microsoft", "stooq", "msft.us"),
+    AssetSpec("nvda.us", "NVIDIA", "stooq", "nvda.us"),
+    AssetSpec("tsla.us", "Tesla", "stooq", "tsla.us"),
+    AssetSpec("googl.us", "Google", "stooq", "googl.us"),
+    AssetSpec("amzn.us", "Amazon", "stooq", "amzn.us"),
+    AssetSpec("meta.us", "Meta", "stooq", "meta.us"),
+    AssetSpec("jpm.us", "JPMorgan", "stooq", "jpm.us"),
+    AssetSpec("v.us", "Visa", "stooq", "v.us"),
+    AssetSpec("wmt.us", "Walmart", "stooq", "wmt.us"),
 ]
 
 
@@ -81,8 +99,6 @@ class HybridTopPerformerTemplate(QuestionTemplate):
         "Find the best performer in the last 24 hours: {assets}.",
         "Which asset has the best daily performance: {assets}?",
     ]
-
-    STOOQ_CSV_URL = "https://stooq.com/q/d/l/"
 
     def __init__(self):
         super().__init__("hybrid_top_performer")
@@ -161,24 +177,24 @@ class HybridTopPerformerTemplate(QuestionTemplate):
 
             try:
                 if source == "coingecko":
-                    change = await self._get_crypto_24h_change(asset_id)
+                    change = await get_crypto_24h_change(asset_id)
                 else:  # stooq
-                    change = await self._get_stooq_24h_change(symbol)
+                    change = await get_stooq_24h_change(symbol)
 
-                if change is not None:
-                    results.append({
-                        "name": name,
-                        "change": change,
-                        "source": source,
-                    })
-                else:
-                    errors.append(f"{name}: no data")
+                results.append({
+                    "name": name,
+                    "change": change,
+                    "source": source,
+                })
+            except RuntimeError as e:
+                # RuntimeError means we've exhausted all retries
+                errors.append(f"{name}: {str(e)}")
             except Exception as e:
                 errors.append(f"{name}: {str(e)}")
 
         if not results:
             error_msg = "; ".join(errors) if errors else "No data fetched"
-            return GroundTruthResult.retry(f"Could not fetch any asset data: {error_msg}")
+            return GroundTruthResult.fail(f"Could not fetch any asset data after retries: {error_msg}")
 
         # Find the best performer
         best = max(results, key=lambda x: x["change"])
@@ -188,46 +204,6 @@ class HybridTopPerformerTemplate(QuestionTemplate):
         details = ", ".join([f"{r['name']}: {r['change']:+.2f}%" for r in sorted_results])
 
         return GroundTruthResult.ok(f"{best['name']} ({best['change']:+.2f}%) | All: {details}")
-
-    async def _get_crypto_24h_change(self, coin_id: str) -> Optional[float]:
-        """Get 24h percentage change from CoinGecko."""
-        try:
-            data = await CoinGeckoClient.get_coin_market_data(coin_id)
-            if data and len(data) > 0:
-                return data[0].get("price_change_percentage_24h")
-        except Exception:
-            pass
-        return None
-
-    async def _get_stooq_24h_change(self, symbol: str) -> Optional[float]:
-        """Get daily percentage change from Stooq."""
-        try:
-            async with aiohttp.ClientSession() as session:
-                params = {"s": symbol, "i": "d"}
-                async with session.get(
-                    self.STOOQ_CSV_URL,
-                    params=params,
-                    timeout=aiohttp.ClientTimeout(total=15)
-                ) as response:
-                    if response.status != 200:
-                        return None
-                    csv_text = await response.text()
-
-            reader = csv.DictReader(io.StringIO(csv_text))
-            rows = list(reader)
-
-            if len(rows) < 2:
-                return None
-
-            # Calculate change from previous close to current close
-            current = float(rows[-1].get("Close", 0))
-            previous = float(rows[-2].get("Close", 0))
-
-            if previous > 0:
-                return ((current - previous) / previous) * 100
-        except Exception:
-            pass
-        return None
 
     async def validate_answer(
         self,
@@ -272,16 +248,35 @@ class HybridTopPerformerTemplate(QuestionTemplate):
             "dogecoin": ["doge", "dogecoin"],
             "avalanche": ["avax", "avalanche"],
             "polkadot": ["dot", "polkadot"],
+            "chainlink": ["link", "chainlink"],
+            "litecoin": ["ltc", "litecoin"],
+            "uniswap": ["uni", "uniswap"],
+            "stellar": ["xlm", "stellar"],
+            "cosmos": ["atom", "cosmos"],
+            "near": ["near"],
+            "aptos": ["apt", "aptos"],
+            "sui": ["sui"],
+            "tao": ["tao", "bittensor"],
             "gold": ["gold", "xau"],
             "silver": ["silver", "xag"],
             "crude oil": ["oil", "crude", "wti"],
+            "natural gas": ["gas", "natgas"],
+            "copper": ["copper", "hg"],
             "s&p 500": ["s&p", "spx", "sp500", "s&p 500"],
             "dow jones": ["dow", "dji", "djia"],
             "nasdaq 100": ["nasdaq", "ndx", "nasdaq 100"],
-            "apple stock": ["apple", "aapl"],
-            "microsoft stock": ["microsoft", "msft"],
-            "nvidia stock": ["nvidia", "nvda"],
-            "tesla stock": ["tesla", "tsla"],
+            "dax": ["dax"],
+            "ftse 100": ["ftse", "ukx"],
+            "apple": ["apple", "aapl"],
+            "microsoft": ["microsoft", "msft"],
+            "nvidia": ["nvidia", "nvda"],
+            "tesla": ["tesla", "tsla"],
+            "google": ["google", "googl", "alphabet"],
+            "amazon": ["amazon", "amzn"],
+            "meta": ["meta", "facebook"],
+            "jpmorgan": ["jpmorgan", "jpm"],
+            "visa": ["visa"],
+            "walmart": ["walmart", "wmt"],
         }
 
         for canonical, variations in name_variations.items():

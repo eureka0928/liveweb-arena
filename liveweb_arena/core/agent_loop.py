@@ -10,6 +10,20 @@ from ..utils.llm_client import LLMClient, LLMFatalError
 from ..utils.logger import log
 
 
+class BrowserFatalError(Exception):
+    """
+    Raised when browser navigation fails after maximum retries.
+
+    This indicates persistent network or site accessibility issues
+    that should terminate evaluation immediately.
+    """
+
+    def __init__(self, message: str, url: str = None, attempts: int = 0):
+        super().__init__(message)
+        self.url = url
+        self.attempts = attempts
+
+
 # Type for navigation callback: async (url: str) -> None
 NavigationCallback = Callable[[str], Any]
 
@@ -125,7 +139,11 @@ class AgentLoop:
 
                 if consecutive_error_pages >= max_error_page_retries:
                     log("Agent", "Max error page retries reached", force=True)
-                    break
+                    raise BrowserFatalError(
+                        f"Browser navigation failed after {consecutive_error_pages} retries: {obs.url}",
+                        url=last_goto_url,
+                        attempts=consecutive_error_pages,
+                    )
 
                 # Wait with backoff before retrying (don't count as a step)
                 wait_time = min(2 * consecutive_error_pages, 10)
