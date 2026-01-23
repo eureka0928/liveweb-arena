@@ -2,9 +2,6 @@
 
 import random
 from typing import Any, Dict, List, Optional
-import aiohttp
-import io
-import csv
 
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
@@ -12,6 +9,7 @@ from liveweb_arena.core.validators.base import (
 from liveweb_arena.core.ground_truth_trigger import (
     UrlPatternTrigger, FetchStrategy, TriggerConfig, GroundTruthResult,
 )
+from liveweb_arena.plugins.stooq.api_client import StooqClient
 from .variables import (
     StockVariable, IndexVariable, CurrencyVariable, CommodityVariable,
     PriceMetricVariable, StockSpec, IndexSpec, CurrencySpec, CommoditySpec,
@@ -72,8 +70,6 @@ class StooqPriceTemplate(QuestionTemplate):
         "What is the latest {instrument} price?",
         "What's the {metric} of {instrument}?",
     ]
-
-    STOOQ_CSV_URL = "https://stooq.com/q/d/l/"
 
     def __init__(self, instrument_types: List[InstrumentType] = None):
         super().__init__("stooq_price")
@@ -177,7 +173,7 @@ class StooqPriceTemplate(QuestionTemplate):
 
     async def get_ground_truth(self, validation_info: Dict[str, Any]) -> GroundTruthResult:
         """
-        Fetch ground truth from Stooq CSV download endpoint.
+        Fetch ground truth from Stooq (via cached StooqClient).
 
         Returns GroundTruthResult with the specific metric value as a string.
         """
@@ -187,42 +183,18 @@ class StooqPriceTemplate(QuestionTemplate):
             return GroundTruthResult.fail("No symbol provided")
 
         try:
-            async with aiohttp.ClientSession() as session:
-                params = {"s": symbol, "i": "d"}
-                async with session.get(
-                    self.STOOQ_CSV_URL,
-                    params=params,
-                    timeout=aiohttp.ClientTimeout(total=15)
-                ) as response:
-                    if response.status == 404:
-                        return GroundTruthResult.fail(f"Symbol {symbol} not found")
-                    if response.status >= 500:
-                        return GroundTruthResult.retry(f"Server error: HTTP {response.status}")
-                    if response.status != 200:
-                        return GroundTruthResult.fail(f"HTTP {response.status}")
-                    csv_text = await response.text()
+            # Use centralized StooqClient (cache-aware)
+            data = await StooqClient.get_price_data(symbol)
 
-            reader = csv.DictReader(io.StringIO(csv_text))
-            rows = list(reader)
+            if not data:
+                return GroundTruthResult.retry("Could not fetch price data")
 
-            if not rows:
-                return GroundTruthResult.fail("No data in CSV response")
-
-            latest = rows[-1]
-            close = self._parse_float(latest.get("Close"))
-            open_price = self._parse_float(latest.get("Open"))
-            high = self._parse_float(latest.get("High"))
-            low = self._parse_float(latest.get("Low"))
-
-            # Calculate change if we have previous data
-            change_pct = None
-            change = None
-            if len(rows) >= 2:
-                prev = rows[-2]
-                prev_close = self._parse_float(prev.get("Close"))
-                if prev_close and close:
-                    change = close - prev_close
-                    change_pct = (change / prev_close) * 100
+            close = data.get("close")
+            open_price = data.get("open")
+            high = data.get("high")
+            low = data.get("low")
+            change = data.get("daily_change")
+            change_pct = data.get("daily_change_pct")
 
             # Return the specific metric requested
             if metric == "last_price":
@@ -254,12 +226,8 @@ class StooqPriceTemplate(QuestionTemplate):
                     return GroundTruthResult.fail("Could not parse close price")
                 return GroundTruthResult.ok(f"{close:.2f}")
 
-        except aiohttp.ClientError as e:
-            return GroundTruthResult.retry(f"Network error: {e}")
-        except TimeoutError:
-            return GroundTruthResult.retry("Request timeout")
         except Exception as e:
-            return GroundTruthResult.fail(f"Unexpected error: {e}")
+            return GroundTruthResult.retry(f"Error fetching data: {e}")
 
     def _parse_float(self, value: Any) -> Optional[float]:
         """Parse a value to float, returning None if invalid"""

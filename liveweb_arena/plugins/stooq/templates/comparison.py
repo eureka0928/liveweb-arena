@@ -3,9 +3,6 @@
 import random
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
-import aiohttp
-import io
-import csv
 
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
@@ -13,6 +10,7 @@ from liveweb_arena.core.validators.base import (
 from liveweb_arena.core.ground_truth_trigger import (
     UrlPatternTrigger, FetchStrategy, TriggerConfig, GroundTruthResult,
 )
+from liveweb_arena.plugins.stooq.api_client import StooqClient
 from .variables import (
     StockVariable, IndexVariable, US_STOCKS, INDICES,
     StockSpec, IndexSpec, InstrumentType,
@@ -63,8 +61,6 @@ class StooqComparisonTemplate(QuestionTemplate):
             "Among {instruments}, which had the worst performance today?",
         ],
     }
-
-    STOOQ_CSV_URL = "https://stooq.com/q/d/l/"
 
     def __init__(self):
         super().__init__("stooq_comparison")
@@ -158,50 +154,24 @@ class StooqComparisonTemplate(QuestionTemplate):
 - The answer must clearly state which instrument wins the comparison"""
 
     async def _fetch_instrument_data(self, symbol: str) -> GroundTruthResult:
-        """Fetch data for a single instrument"""
+        """Fetch data for a single instrument (via cached StooqClient)"""
         try:
-            async with aiohttp.ClientSession() as session:
-                params = {"s": symbol, "i": "d"}
-                async with session.get(
-                    self.STOOQ_CSV_URL,
-                    params=params,
-                    timeout=aiohttp.ClientTimeout(total=15)
-                ) as response:
-                    if response.status == 404:
-                        return GroundTruthResult.fail(f"Symbol {symbol} not found")
-                    if response.status >= 500:
-                        return GroundTruthResult.retry(f"Server error: HTTP {response.status}")
-                    if response.status != 200:
-                        return GroundTruthResult.fail(f"HTTP {response.status}")
-                    csv_text = await response.text()
+            data = await StooqClient.get_price_data(symbol)
 
-            reader = csv.DictReader(io.StringIO(csv_text))
-            rows = list(reader)
+            if not data:
+                return GroundTruthResult.retry(f"No data for {symbol}")
 
-            if not rows:
-                return GroundTruthResult.fail(f"No data for {symbol}")
-
-            latest = rows[-1]
             result = {
                 "symbol": symbol,
-                "close": self._parse_float(latest.get("Close")),
-                "volume": self._parse_float(latest.get("Volume")),
+                "close": data.get("close"),
+                "volume": data.get("volume"),
+                "change_percent": data.get("daily_change_pct"),
             }
-
-            if len(rows) >= 2:
-                prev = rows[-2]
-                prev_close = self._parse_float(prev.get("Close"))
-                if prev_close and result["close"]:
-                    result["change_percent"] = ((result["close"] - prev_close) / prev_close) * 100
 
             return GroundTruthResult.ok(result)
 
-        except aiohttp.ClientError as e:
-            return GroundTruthResult.retry(f"Network error: {e}")
-        except TimeoutError:
-            return GroundTruthResult.retry("Request timeout")
         except Exception as e:
-            return GroundTruthResult.fail(f"Unexpected error: {e}")
+            return GroundTruthResult.retry(f"Error fetching {symbol}: {e}")
 
     def _parse_float(self, value: Any) -> Optional[float]:
         if value is None:

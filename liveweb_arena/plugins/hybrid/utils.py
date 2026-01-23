@@ -4,7 +4,7 @@ import asyncio
 import csv
 import io
 import logging
-from typing import Callable, Optional, TypeVar
+from typing import Any, Callable, Dict, Optional, TypeVar
 
 import aiohttp
 
@@ -16,6 +16,20 @@ T = TypeVar('T')
 
 # Stooq CSV download URL
 STOOQ_CSV_URL = "https://stooq.com/q/d/l/"
+
+# Thread-local cache context (set during evaluation)
+_cache_context: Optional[Any] = None
+
+
+def set_cache_context(context: Optional[Any]):
+    """Set the cache context for current evaluation."""
+    global _cache_context
+    _cache_context = context
+
+
+def get_cache_context() -> Optional[Any]:
+    """Get the current cache context."""
+    return _cache_context
 
 
 async def retry_with_backoff(
@@ -74,6 +88,8 @@ async def get_crypto_24h_change(coin_id: str) -> float:
     """
     Get 24h percentage change from CoinGecko with retry.
 
+    Uses cache if available, otherwise falls back to live API.
+
     Args:
         coin_id: CoinGecko coin identifier
 
@@ -83,6 +99,21 @@ async def get_crypto_24h_change(coin_id: str) -> float:
     Raises:
         RuntimeError: If all retries fail
     """
+    # Try cache first
+    ctx = get_cache_context()
+    if ctx is not None:
+        api_data = ctx.get_api_data("coingecko")
+        if api_data:
+            coins = api_data.get("coins", {})
+            coin_data = coins.get(coin_id)
+            if coin_data:
+                change = coin_data.get("price_change_percentage_24h")
+                if change is not None:
+                    logger.debug(f"Cache hit: CoinGecko {coin_id} change={change}")
+                    return change
+            logger.debug(f"Cache miss for CoinGecko {coin_id}, falling back to API")
+
+    # Fall back to live API with retry
     async def fetch():
         data = await CoinGeckoClient.get_coin_market_data(coin_id)
         if data and len(data) > 0:
@@ -103,6 +134,8 @@ async def get_stooq_price(symbol: str) -> float:
     """
     Get current price from Stooq with retry.
 
+    Uses cache if available, otherwise falls back to live API.
+
     Args:
         symbol: Stooq symbol
 
@@ -112,6 +145,21 @@ async def get_stooq_price(symbol: str) -> float:
     Raises:
         RuntimeError: If all retries fail
     """
+    # Try cache first
+    ctx = get_cache_context()
+    if ctx is not None:
+        api_data = ctx.get_api_data("stooq")
+        if api_data:
+            assets = api_data.get("assets", {})
+            asset_data = assets.get(symbol)
+            if asset_data:
+                price = asset_data.get("close")
+                if price is not None:
+                    logger.debug(f"Cache hit: Stooq {symbol} price={price}")
+                    return price
+            logger.debug(f"Cache miss for Stooq {symbol}, falling back to API")
+
+    # Fall back to live API with retry
     async def fetch():
         async with aiohttp.ClientSession() as session:
             params = {"s": symbol, "i": "d"}
@@ -145,6 +193,8 @@ async def get_stooq_24h_change(symbol: str) -> float:
     """
     Get daily percentage change from Stooq with retry.
 
+    Uses cache if available, otherwise falls back to live API.
+
     Args:
         symbol: Stooq symbol
 
@@ -154,6 +204,21 @@ async def get_stooq_24h_change(symbol: str) -> float:
     Raises:
         RuntimeError: If all retries fail
     """
+    # Try cache first
+    ctx = get_cache_context()
+    if ctx is not None:
+        api_data = ctx.get_api_data("stooq")
+        if api_data:
+            assets = api_data.get("assets", {})
+            asset_data = assets.get(symbol)
+            if asset_data:
+                change = asset_data.get("daily_change_pct")
+                if change is not None:
+                    logger.debug(f"Cache hit: Stooq {symbol} change={change}")
+                    return change
+            logger.debug(f"Cache miss for Stooq {symbol}, falling back to API")
+
+    # Fall back to live API with retry
     async def fetch():
         async with aiohttp.ClientSession() as session:
             params = {"s": symbol, "i": "d"}

@@ -2,9 +2,26 @@
 
 import os
 import asyncio
+import logging
 from typing import Any, Dict, Optional
 
 import aiohttp
+
+logger = logging.getLogger(__name__)
+
+# Global cache context reference (set by env.py during evaluation)
+_cache_context: Optional[Any] = None
+
+
+def set_coingecko_cache_context(context: Optional[Any]):
+    """Set the cache context for CoinGecko API calls."""
+    global _cache_context
+    _cache_context = context
+
+
+def get_coingecko_cache_context() -> Optional[Any]:
+    """Get the current cache context."""
+    return _cache_context
 
 
 class CoinGeckoClient:
@@ -131,6 +148,30 @@ class CoinGeckoClient:
         Returns:
             List of coin market data or None
         """
+        # Try cache first
+        ctx = get_coingecko_cache_context()
+        if ctx is not None:
+            api_data = ctx.get_api_data("coingecko")
+            if api_data:
+                coins = api_data.get("coins", {})
+                # Parse requested coin IDs
+                requested_ids = [id.strip() for id in coin_ids.split(",")]
+                cached_results = []
+                all_found = True
+                for coin_id in requested_ids:
+                    coin_data = coins.get(coin_id)
+                    if coin_data:
+                        cached_results.append(coin_data)
+                    else:
+                        all_found = False
+                        break
+
+                if all_found and cached_results:
+                    logger.debug(f"Cache hit: CoinGecko market data for {coin_ids}")
+                    return cached_results
+                logger.debug(f"Cache miss for CoinGecko {coin_ids}, falling back to API")
+
+        # Fall back to live API
         params = {
             "vs_currency": vs_currency,
             "ids": coin_ids,
@@ -155,6 +196,30 @@ class CoinGeckoClient:
         Returns:
             Dict of prices or None
         """
+        # Try cache first (if requesting USD prices)
+        if "usd" in vs_currencies.lower():
+            ctx = get_coingecko_cache_context()
+            if ctx is not None:
+                api_data = ctx.get_api_data("coingecko")
+                if api_data:
+                    coins = api_data.get("coins", {})
+                    requested_ids = [id.strip() for id in coin_ids.split(",")]
+                    cached_results = {}
+                    all_found = True
+                    for coin_id in requested_ids:
+                        coin_data = coins.get(coin_id)
+                        if coin_data and "current_price" in coin_data:
+                            cached_results[coin_id] = {"usd": coin_data["current_price"]}
+                        else:
+                            all_found = False
+                            break
+
+                    if all_found and cached_results:
+                        logger.debug(f"Cache hit: CoinGecko simple price for {coin_ids}")
+                        return cached_results
+                    logger.debug(f"Cache miss for CoinGecko simple price {coin_ids}")
+
+        # Fall back to live API
         params = {
             "ids": coin_ids,
             "vs_currencies": vs_currencies,

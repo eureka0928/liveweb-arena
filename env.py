@@ -12,6 +12,10 @@ from liveweb_arena.core.agent_policy import AgentPolicy
 from liveweb_arena.core.agent_loop import AgentLoop, BrowserFatalError
 from liveweb_arena.core.parser import AnswerParser
 from liveweb_arena.core.ground_truth_trigger import GroundTruthManager, FetchStrategy
+from liveweb_arena.core.cache_manager import (
+    get_cache_manager, EvaluationCacheContext,
+)
+from liveweb_arena.core.cache_adapters import get_adapter_registry
 from liveweb_arena.plugins.base import BasePlugin
 from liveweb_arena.plugins.weather import WeatherPlugin
 from liveweb_arena.plugins.taostats import TaostatsPlugin
@@ -19,6 +23,9 @@ from liveweb_arena.plugins.stooq import StooqPlugin
 from liveweb_arena.plugins.coingecko import CoinGeckoPlugin
 from liveweb_arena.plugins.tmdb import TMDBPlugin
 from liveweb_arena.plugins.hybrid import HybridPlugin
+from liveweb_arena.plugins.hybrid.utils import set_cache_context
+from liveweb_arena.plugins.coingecko.api_client import set_coingecko_cache_context
+from liveweb_arena.plugins.stooq.api_client import set_stooq_cache_context
 from liveweb_arena.core.validators.llm_validator import validate_answers_with_llm
 from liveweb_arena.utils.llm_client import LLMClient, LLMFatalError
 from liveweb_arena.utils.logger import log
@@ -46,18 +53,21 @@ class Actor:
         "hybrid": HybridPlugin,
     }
 
-    def __init__(self, api_key: str = None):
+    def __init__(self, api_key: str = None, use_cache: bool = True):
         """
         Initialize Actor.
 
         Args:
             api_key: API key for LLM service. Falls back to CHUTES_API_KEY env var.
+            use_cache: Whether to use caching for API data (default: True)
         """
         self.api_key = api_key or os.getenv("CHUTES_API_KEY")
         self.browser: Optional[BrowserEngine] = None
         self.task_manager = TaskManager(self.PLUGINS)
         self._semaphore: Optional[asyncio.Semaphore] = None
         self._lock = asyncio.Lock()
+        self.use_cache = use_cache
+        self._cache_initialized = False
 
     async def evaluate(
         self,
@@ -159,6 +169,12 @@ class Actor:
         """Internal evaluation logic"""
         await self._ensure_browser()
 
+        # Initialize cache adapters (lazy, only once)
+        if self.use_cache and not self._cache_initialized:
+            get_adapter_registry()  # This initializes all adapters
+            self._cache_initialized = True
+            log("Actor", "Cache adapters initialized")
+
         task = await self.task_manager.generate_composite_task(
             seed=seed,
             num_subtasks=num_subtasks,
@@ -204,6 +220,39 @@ class Actor:
 
         try:
             llm_client = LLMClient(base_url=base_url, api_key=api_key)
+
+            # Determine which cache sources are needed based on plugins
+            cache_sources = []
+            for subtask in task.subtasks:
+                plugin_name = subtask.plugin_name
+                if plugin_name == "hybrid":
+                    cache_sources.extend(["coingecko", "stooq"])
+                elif plugin_name == "coingecko":
+                    cache_sources.append("coingecko")
+                elif plugin_name == "stooq":
+                    cache_sources.append("stooq")
+            cache_sources = list(set(cache_sources))  # Dedupe
+
+            # Set up cache context if caching is enabled
+            cache_context = None
+            if self.use_cache and cache_sources:
+                try:
+                    cache_manager = get_cache_manager()
+                    cache_context = EvaluationCacheContext(
+                        cache_manager=cache_manager,
+                        sources=cache_sources,
+                        ensure_fresh=True,
+                    )
+                    await cache_context.__aenter__()
+                    # Set cache context for all modules
+                    set_cache_context(cache_context)
+                    set_coingecko_cache_context(cache_context)
+                    set_stooq_cache_context(cache_context)
+                    cached = [s for s, v in cache_context.locked_versions.items() if v]
+                    log("Actor", f"Cache context initialized for: {cached}")
+                except Exception as e:
+                    log("Actor", f"Cache initialization failed: {e}, continuing without cache")
+                    cache_context = None
 
             # Set up GroundTruthManager for triggered fetching
             gt_manager = GroundTruthManager(task_manager=self.task_manager)
@@ -351,6 +400,12 @@ class Actor:
             return result
 
         finally:
+            # Clean up cache context
+            if cache_context is not None:
+                await cache_context.__aexit__(None, None, None)
+                set_cache_context(None)
+                set_coingecko_cache_context(None)
+                set_stooq_cache_context(None)
             # Always close the session
             await session.close()
 
