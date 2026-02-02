@@ -338,7 +338,10 @@ class Actor:
                     agent_loop.run(task=task, model=model, temperature=temperature, seed=seed),
                     timeout=timeout,
                 )
-                if agent_loop.is_max_steps_reached():
+                if agent_loop.is_parse_failed():
+                    failure_reason = "parse_failed"
+                    log("Actor", "Parse failed - model output not valid JSON", force=True)
+                elif agent_loop.is_max_steps_reached():
                     failure_reason = "max_steps_reached"
                     log("Actor", "Max steps reached without completion - marking as failed", force=True)
             except asyncio.TimeoutError:
@@ -351,7 +354,8 @@ class Actor:
                 log("Actor", f"Fatal error - {error_message}", force=True)
 
             # Exception path: recover partial state from agent loop
-            if failure_reason and failure_reason != "max_steps_reached":
+            # (parse_failed and max_steps_reached are normal exits, not exceptions)
+            if failure_reason and failure_reason not in ("max_steps_reached", "parse_failed"):
                 trajectory = agent_loop.get_trajectory()
                 final_answer = agent_loop.get_final_answer()
                 usage = agent_loop.get_usage()
@@ -546,18 +550,12 @@ class Actor:
                 }
             })
 
-            if step.action:
-                action_content = f"{step.action.action_type} {step.action.params}" if step.action.params else step.action.action_type
-            else:
-                action_content = "(no action)"
-
             conversation.append({
                 "role": "assistant",
-                "content": action_content,
+                "content": step.raw_response,
                 "metadata": {
                     "type": "agent_action",
                     "step": step.step_num,
-                    "thought": step.thought,
                     "action_type": step.action.action_type if step.action else None,
                     "action_result": step.action_result,
                 }

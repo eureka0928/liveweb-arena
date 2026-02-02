@@ -671,12 +671,9 @@ class BrowserSession:
                     await asyncio.sleep(0.5)
                     continue
                 else:
-                    # Final attempt failed - return minimal observation
-                    return BrowserObservation(
-                        url=self._page.url if self._page else "",
-                        title="",
-                        accessibility_tree="",
-                    )
+                    # Final attempt failed - raise error instead of returning empty observation
+                    # Empty observation would affect agent decisions and GT collection
+                    raise RuntimeError(f"Failed to get browser observation after {max_retries} retries: {e}") from e
 
     def _format_accessibility_tree(self, node: dict, indent: int = 0) -> str:
         """Format accessibility tree node recursively"""

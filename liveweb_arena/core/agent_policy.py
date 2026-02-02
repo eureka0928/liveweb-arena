@@ -24,11 +24,13 @@ You have access to a browser and can navigate to any website to gather informati
 
 ## Action Protocol
 
-You must respond with a single JSON object (no markdown, no extra text). The JSON must have this structure:
+First, wrap your reasoning in <think>...</think> tags, then respond with a JSON object:
 
 ```
+<think>
+Your reasoning about what to do next...
+</think>
 {{
-  "thought": "your reasoning about what to do next",
   "action": {{
     "type": "<action_type>",
     "params": {{...}}
@@ -189,20 +191,17 @@ class AgentPolicy:
         max_steps: int = 30,
     ) -> str:
         """Build step prompt with current observation and recent history"""
-        # Format recent actions WITH thoughts (so model remembers its reasoning)
+        # Format recent steps with raw response (preserves model's thinking/reasoning)
         recent = trajectory[-self._max_recent_steps:] if trajectory else []
         if recent:
             action_lines = []
             for step in recent:
-                if step.action:
-                    # Include thought so model remembers what it found
-                    if step.thought:
-                        action_lines.append(f"Step {step.step_num} thought: {step.thought}")
-                    action_str = f"Step {step.step_num} action: {step.action.action_type}"
-                    if step.action.params:
-                        action_str += f" {json.dumps(step.action.params)}"
-                    action_str += f" -> {step.action_result}"
-                    action_lines.append(action_str)
+                # Include raw response so model sees its own output
+                if step.raw_response:
+                    # Truncate if too long
+                    response_preview = step.raw_response[:500] if len(step.raw_response) > 500 else step.raw_response
+                    action_lines.append(f"Step {step.step_num} response: {response_preview}")
+                action_lines.append(f"Step {step.step_num} result: {step.action_result}")
             recent_actions = "\n".join(action_lines) if action_lines else "(no actions yet)"
         else:
             recent_actions = "(no actions yet)"
@@ -221,12 +220,12 @@ class AgentPolicy:
             last_step_warning=last_step_warning,
         )
 
-    def parse_response(self, raw: str) -> Tuple[Optional[str], Optional[BrowserAction]]:
+    def parse_response(self, raw: str) -> Optional[BrowserAction]:
         """
-        Parse LLM response to extract thought and action.
+        Parse LLM response to extract action.
 
         Returns:
-            Tuple of (thought, BrowserAction) or (None, None) on failure
+            BrowserAction or None on failure
         """
         # Try direct parse first
         parsed = self._try_parse_json(raw)
@@ -237,14 +236,13 @@ class AgentPolicy:
             parsed = self._extract_json_object(raw)
 
         if parsed is None:
-            return None, None
+            return None
 
-        # Extract thought and action
-        thought = parsed.get("thought")
+        # Extract action
         action_data = parsed.get("action", {})
 
         if not action_data:
-            return thought, None
+            return None
 
         action_type = action_data.get("type", "")
         params = action_data.get("params", {})
@@ -258,35 +256,30 @@ class AgentPolicy:
                     action_type = valid_type
                     break
             else:
-                # Default to wait if unknown
-                action_type = "wait"
-                params = {"seconds": 0.5}
+                return None
 
-        return thought, BrowserAction(action_type=action_type, params=params)
+        return BrowserAction(action_type=action_type, params=params)
 
     def _try_parse_json(self, text: str) -> Optional[dict]:
         """Try to parse text as JSON directly"""
         try:
-            return json.loads(text.strip())
+            result = json.loads(text.strip())
+            # Ensure we got a dict, not just any JSON value (int, string, list, etc.)
+            if isinstance(result, dict):
+                return result
+            return None
         except json.JSONDecodeError:
             return None
 
-    def _extract_json_object(self, text: str) -> Optional[dict]:
+    def _find_json_candidates(self, text: str) -> Tuple[List[str], Optional[str]]:
         """
-        Extract the largest JSON object from text.
+        Find all potential JSON objects in text by matching braces.
 
-        Handles cases where LLM wraps JSON in markdown or adds extra text.
+        Returns:
+            Tuple of (complete_candidates, truncated_json)
+            - complete_candidates: List of complete {...} strings
+            - truncated_json: Partial JSON if text ends with unclosed braces, else None
         """
-        # Try to find JSON in markdown code block
-        code_block_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-        if code_block_match:
-            try:
-                return json.loads(code_block_match.group(1))
-            except json.JSONDecodeError:
-                pass
-
-        # Try to find raw JSON object
-        # Find all potential JSON objects by matching braces
         candidates = []
         depth = 0
         start = None
@@ -302,12 +295,50 @@ class AgentPolicy:
                     candidates.append(text[start:i + 1])
                     start = None
 
-        # Try candidates from largest to smallest
-        candidates.sort(key=len, reverse=True)
-        for candidate in candidates:
-            try:
-                return json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
+        # Check for truncated JSON (unclosed braces at end)
+        truncated = None
+        if start is not None and depth > 0:
+            truncated = text[start:] + "}" * depth
+
+        return candidates, truncated
+
+    def _try_parse_as_dict(self, text: str) -> Optional[dict]:
+        """Try to parse text as JSON dict, return None if not a dict."""
+        try:
+            result = json.loads(text)
+            return result if isinstance(result, dict) else None
+        except json.JSONDecodeError:
+            return None
+
+    def _extract_json_object(self, text: str) -> Optional[dict]:
+        """
+        Extract JSON object from text with multiple fallback strategies.
+
+        Strategies (in order):
+        1. Extract from markdown code block (```json ... ```)
+        2. Find complete JSON objects by brace matching
+        3. Repair truncated JSON by closing missing braces
+        """
+        # Strategy 1: Markdown code block
+        code_block_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+        if code_block_match:
+            result = self._try_parse_as_dict(code_block_match.group(1))
+            if result:
+                return result
+
+        # Strategy 2 & 3: Find candidates and try truncated repair
+        candidates, truncated = self._find_json_candidates(text)
+
+        # Try truncated repair first (more likely to be the intended JSON)
+        if truncated:
+            result = self._try_parse_as_dict(truncated)
+            if result:
+                return result
+
+        # Try complete candidates from largest to smallest
+        for candidate in sorted(candidates, key=len, reverse=True):
+            result = self._try_parse_as_dict(candidate)
+            if result:
+                return result
 
         return None

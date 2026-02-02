@@ -133,15 +133,9 @@ class LLMValidator:
             )
 
         except Exception as e:
-            # Fallback to simple string comparison on LLM error
-            is_match = str(expected).lower().strip() in str(actual).lower().strip()
-            return LLMValidationResult(
-                score=1.0 if is_match else 0.0,
-                is_correct=is_match,
-                expected=expected,
-                actual=actual,
-                reasoning=f"LLM validation failed ({e}), used string match fallback.",
-            )
+            # LLM validation failure - cannot determine score reliably
+            # Re-raise to signal system error rather than give potentially wrong score
+            raise RuntimeError(f"LLM validation failed: {e}") from e
 
     def _parse_response(self, response: str) -> dict:
         """Parse LLM response to extract score and reasoning"""
@@ -249,24 +243,15 @@ async def validate_answers_with_llm(
         tasks = [validate_single(subtask) for subtask in subtasks]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Handle any exceptions
-        final_results = []
+        # Check for any exceptions - re-raise to signal system error
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                # Return error result for failed validation
                 subtask = subtasks[i]
-                final_results.append({
-                    "question": subtask.intent,
-                    "answer_tag": subtask.answer_tag,
-                    "expected": ground_truths.get(subtask.answer_tag),
-                    "actual": answers.get(subtask.answer_tag),
-                    "score": 0.0,
-                    "is_correct": False,
-                    "reasoning": f"Validation failed: {str(result)}",
-                })
-            else:
-                final_results.append(result)
-        return final_results
+                raise RuntimeError(
+                    f"Validation failed for '{subtask.answer_tag}': {result}"
+                ) from result
+
+        return results
     else:
         # Sequential validation
         results = []

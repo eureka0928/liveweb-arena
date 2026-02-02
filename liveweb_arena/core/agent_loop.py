@@ -120,6 +120,7 @@ class AgentLoop:
         self._total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self._final_answer = None
         self._max_steps_reached = False
+        self._parse_failed = False
         self._policy.reset_repair_count()
 
         system_prompt = self._policy.build_system_prompt(task)
@@ -217,7 +218,6 @@ class AgentLoop:
                 self._trajectory.append(TrajectoryStep(
                     step_num=step_num,
                     observation=current_obs,
-                    thought=f"LLM error: {e}",
                     action=BrowserAction(action_type="wait", params={"seconds": 2}),
                     action_result="LLM call failed",
                     prompt=user_prompt,
@@ -236,11 +236,23 @@ class AgentLoop:
                 )
                 continue
 
-            thought, action = self._policy.parse_response(raw_response)
+            action = self._policy.parse_response(raw_response)
 
+            # Parse failed - terminate immediately
             if action is None:
-                action = BrowserAction(action_type="wait", params={"seconds": 0.5})
-                action_result = "Parse failed"
+                log("Agent", f"PARSE FAILED: {raw_response[:200]!r}", force=True)
+
+                step = TrajectoryStep(
+                    step_num=step_num,
+                    observation=current_obs,
+                    action=None,
+                    action_result="Parse failed - model output not valid JSON",
+                    prompt=user_prompt,
+                    raw_response=raw_response,
+                )
+                self._trajectory.append(step)
+                self._parse_failed = True
+                break
 
             if action.action_type == "stop":
                 final_params = action.params.get("final", {})
@@ -250,10 +262,10 @@ class AgentLoop:
                 step = TrajectoryStep(
                     step_num=step_num,
                     observation=current_obs,
-                    thought=thought,
                     action=action,
                     action_result="Task completed",
                     prompt=user_prompt,
+                    raw_response=raw_response,
                 )
                 self._trajectory.append(step)
 
@@ -266,11 +278,37 @@ class AgentLoop:
                 break
             else:
                 log("Agent", f"Action: {action.action_type}")
-                try:
-                    old_url = obs.url if obs else None
-                    obs = await self._session.execute_action(action)
-                    action_result = "Success"
+                old_url = obs.url if obs else None
 
+                # Retry logic for goto actions (network errors)
+                max_retries = 3 if action.action_type == "goto" else 1
+                last_error = None
+
+                for attempt in range(max_retries):
+                    try:
+                        obs = await self._session.execute_action(action)
+                        action_result = "Success"
+                        last_error = None
+                        break
+                    except Exception as e:
+                        last_error = e
+                        if attempt < max_retries - 1:
+                            wait_time = 2 * (attempt + 1)
+                            log("Agent", f"Action failed (attempt {attempt + 1}/{max_retries}): {e}, retrying in {wait_time}s")
+                            await asyncio.sleep(wait_time)
+
+                # Network error after all retries = fatal (GT cannot be collected)
+                if last_error is not None:
+                    if action.action_type == "goto":
+                        url = action.params.get("url", "")
+                        raise BrowserFatalError(
+                            f"Navigation failed after {max_retries} retries: {last_error}",
+                            url=url,
+                            attempts=max_retries,
+                        )
+                    else:
+                        action_result = f"Failed: {last_error}"
+                else:
                     # Track goto URL for retry on error pages
                     if action.action_type == "goto":
                         last_goto_url = action.params.get("url", "")
@@ -283,16 +321,14 @@ class AgentLoop:
                             raise  # Cache failure = browser can't load = terminate immediately
                         except Exception as e:
                             log("Agent", f"Navigation callback error: {e}")
-                except Exception as e:
-                    action_result = f"Failed: {e}"
 
             step = TrajectoryStep(
                 step_num=step_num,
                 observation=current_obs,
-                thought=thought,
                 action=action,
                 action_result=action_result,
                 prompt=user_prompt,
+                raw_response=raw_response,
             )
             self._trajectory.append(step)
 
@@ -314,3 +350,7 @@ class AgentLoop:
     def is_max_steps_reached(self) -> bool:
         """Check if max steps was reached without completion"""
         return self._max_steps_reached
+
+    def is_parse_failed(self) -> bool:
+        """Check if evaluation terminated due to parse failure"""
+        return self._parse_failed
