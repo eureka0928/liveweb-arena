@@ -78,6 +78,11 @@ class TaskRegistry:
         50: ("hybrid", "hybrid_top_performer"),
         51: ("hybrid", "hybrid_ranking"),
         52: ("hybrid", "hybrid_conditional_branch"),
+        53: ("hybrid", "hybrid_portfolio_rebalance"),
+        54: ("hybrid", "hybrid_threshold_alert"),
+        55: ("hybrid", "hybrid_arbitrage_finder"),
+        56: ("hybrid", "hybrid_anomaly_detection"),
+        57: ("hybrid", "hybrid_time_series_pattern"),
 
         # Add new templates here with new IDs...
     }
