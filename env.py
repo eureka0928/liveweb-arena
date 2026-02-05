@@ -23,9 +23,36 @@ from liveweb_arena.plugins import get_plugin, get_all_plugins
 from liveweb_arena.core.validators.llm_validator import validate_answers_with_llm
 from liveweb_arena.utils.llm_client import LLMClient, LLMFatalError
 from liveweb_arena.utils.logger import log
+from urllib.parse import urlparse
 
 # Import OpenEnvResponse from affinetes
 from affinetes.core.openenv import OpenEnvResponse
+
+
+def _url_matches_domain(url: str, allowed_domain: str) -> bool:
+    """
+    Check if URL belongs to an allowed domain.
+
+    Uses proper domain matching (exact or subdomain), NOT substring matching.
+    This prevents attacks like URL path injection.
+
+    Args:
+        url: Full URL to check
+        allowed_domain: Domain name to match against (e.g., "coingecko.com")
+
+    Returns:
+        True if URL's domain matches or is subdomain of allowed_domain
+    """
+    try:
+        parsed = urlparse(url.lower())
+        domain = parsed.netloc
+        # Remove port if present
+        if ":" in domain:
+            domain = domain.split(":")[0]
+        # Exact match or subdomain match
+        return domain == allowed_domain or domain.endswith("." + allowed_domain)
+    except Exception:
+        return False
 
 
 @dataclass
@@ -324,7 +351,7 @@ class Actor:
                         plugin = None
                         for p in plugins_used.values():
                             for domain in p.allowed_domains:
-                                if domain in url.lower():
+                                if _url_matches_domain(url, domain):
                                     plugin = p
                                     break
                             if plugin:
@@ -364,7 +391,7 @@ class Actor:
                             # This ensures GT matches what agent sees in real-time
                             for p in plugins_used.values():
                                 for domain in p.allowed_domains:
-                                    if domain in url.lower():
+                                    if _url_matches_domain(url, domain):
                                         need_api = p.needs_api_data(url)
                                         if need_api:
                                             # Data page: API fetch must succeed
@@ -1103,7 +1130,7 @@ class Actor:
         plugin = None
         for p in episode.plugins_used.values():
             for domain in p.allowed_domains:
-                if domain in url.lower():
+                if _url_matches_domain(url, domain):
                     plugin = p
                     break
             if plugin:
@@ -1145,7 +1172,7 @@ class Actor:
             # LIVE mode: fetch api_data from network
             for p in episode.plugins_used.values():
                 for domain in p.allowed_domains:
-                    if domain in url.lower():
+                    if _url_matches_domain(url, domain):
                         need_api = p.needs_api_data(url)
                         if need_api:
                             # Data page: API fetch must succeed
