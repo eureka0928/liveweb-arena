@@ -7,6 +7,7 @@ from .portfolio import HybridPortfolioRebalanceTemplate
 from .anomaly import HybridAnomalyDetectionTemplate
 from .chained_decision import HybridChainedDecisionTemplate
 from .cross_domain_calc import HybridCrossDomainCalcTemplate
+from .satisficing_search import HybridSatisficingSearchTemplate
 
 __all__ = [
     "HybridTopPerformerTemplate",
@@ -16,4 +17,5 @@ __all__ = [
     "HybridAnomalyDetectionTemplate",
     "HybridChainedDecisionTemplate",
     "HybridCrossDomainCalcTemplate",
+    "HybridSatisficingSearchTemplate",
 ]

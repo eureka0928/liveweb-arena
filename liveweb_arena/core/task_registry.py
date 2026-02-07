@@ -83,6 +83,7 @@ class TaskRegistry:
         56: ("hybrid", "hybrid_anomaly_detection"),
         58: ("hybrid", "hybrid_chained_decision"),
         59: ("hybrid", "hybrid_cross_domain_calc"),
+        60: ("hybrid", "hybrid_satisficing_search"),
 
         # Add new templates here with new IDs...
     }
