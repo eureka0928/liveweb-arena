@@ -1,8 +1,8 @@
-"""JSON-only agent policy for browser action parsing and repair"""
+"""JSON-only agent policy for browser action parsing"""
 
 import json
 import re
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from .models import BrowserAction, BrowserObservation, CompositeTask, TrajectoryStep
 
@@ -24,12 +24,9 @@ You have access to a browser and can navigate to any website to gather informati
 
 ## Action Protocol
 
-First, wrap your reasoning in <think>...</think> tags, then respond with a JSON object:
+Respond with a JSON object for your next action:
 
 ```
-<think>
-Your reasoning about what to do next...
-</think>
 {{
   "action": {{
     "type": "<action_type>",
@@ -110,8 +107,7 @@ Your reasoning about what to do next...
 
 ## IMPORTANT
 
-- Your response format: <think>reasoning</think> followed by a JSON object
-- Do NOT use markdown code blocks around the JSON
+- You may think/reason freely, but your response must contain exactly one JSON object — only the JSON is parsed
 - The JSON must have nested structure: {{"action": {{"type": "...", "params": {{...}}}}}}
 """
 
@@ -131,7 +127,7 @@ Title: {title}
 
 **Step {current_step}/{max_steps}** ({remaining_steps} steps remaining){last_step_warning}
 
-What is your next action? Remember: output ONLY a JSON object, no markdown or extra text.
+What is your next action? Your response must contain a JSON action object.
 """
 
 LAST_STEP_WARNING = """
@@ -146,27 +142,11 @@ class AgentPolicy:
     Responsibilities:
     - Build system and step prompts
     - Parse LLM response to BrowserAction
-    - Repair malformed JSON (two-stage)
+    - Extract valid JSON from text (no repair of malformed JSON)
     """
 
     def __init__(self, max_recent_steps: int = 5):
-        """
-        Initialize policy.
-
-        Args:
-            max_recent_steps: Number of recent steps to include in prompt
-        """
         self._max_recent_steps = max_recent_steps
-        self._json_repair_count = 0
-
-    @property
-    def json_repair_count(self) -> int:
-        """Get count of JSON repairs performed"""
-        return self._json_repair_count
-
-    def reset_repair_count(self):
-        """Reset JSON repair counter"""
-        self._json_repair_count = 0
 
     def build_system_prompt(self, task: CompositeTask) -> str:
         """Build system prompt with task intent and plugin hints"""
@@ -230,9 +210,8 @@ class AgentPolicy:
         # Try direct parse first
         parsed = self._try_parse_json(raw)
 
-        # If direct parse fails, try heuristic extraction
+        # If direct parse fails, try extracting JSON from surrounding text
         if parsed is None:
-            self._json_repair_count += 1
             parsed = self._extract_json_object(raw)
 
         if parsed is None:
@@ -263,14 +242,12 @@ class AgentPolicy:
         except json.JSONDecodeError:
             return None
 
-    def _find_json_candidates(self, text: str) -> Tuple[List[str], Optional[str]]:
+    def _find_json_candidates(self, text: str) -> List[str]:
         """
-        Find all potential JSON objects in text by matching braces.
+        Find all complete JSON objects in text by matching braces.
 
         Returns:
-            Tuple of (complete_candidates, truncated_json)
-            - complete_candidates: List of complete {...} strings
-            - truncated_json: Partial JSON if text ends with unclosed braces, else None
+            List of complete {...} strings found via brace matching.
         """
         candidates = []
         depth = 0
@@ -287,12 +264,7 @@ class AgentPolicy:
                     candidates.append(text[start:i + 1])
                     start = None
 
-        # Check for truncated JSON (unclosed braces at end)
-        truncated = None
-        if start is not None and depth > 0:
-            truncated = text[start:] + "}" * depth
-
-        return candidates, truncated
+        return candidates
 
     def _try_parse_as_dict(self, text: str) -> Optional[dict]:
         """Try to parse text as JSON dict, return None if not a dict."""
@@ -304,12 +276,13 @@ class AgentPolicy:
 
     def _extract_json_object(self, text: str) -> Optional[dict]:
         """
-        Extract JSON object from text with multiple fallback strategies.
+        Extract valid JSON object from surrounding text.
+
+        No repair is performed — malformed JSON indicates model failure.
 
         Strategies (in order):
         1. Extract from markdown code block (```json ... ```)
         2. Find complete JSON objects by brace matching
-        3. Repair truncated JSON by closing missing braces
         """
         # Strategy 1: Markdown code block
         code_block_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
@@ -318,17 +291,8 @@ class AgentPolicy:
             if result:
                 return result
 
-        # Strategy 2 & 3: Find candidates and try truncated repair
-        candidates, truncated = self._find_json_candidates(text)
-
-        # Try truncated repair first (more likely to be the intended JSON)
-        if truncated:
-            result = self._try_parse_as_dict(truncated)
-            if result:
-                return result
-
-        # Try complete candidates from largest to smallest
-        for candidate in sorted(candidates, key=len, reverse=True):
+        # Strategy 2: Find complete JSON objects by brace matching
+        for candidate in sorted(self._find_json_candidates(text), key=len, reverse=True):
             result = self._try_parse_as_dict(candidate)
             if result:
                 return result

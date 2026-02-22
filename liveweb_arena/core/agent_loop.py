@@ -121,7 +121,6 @@ class AgentLoop:
         self._final_answer = None
         self._max_steps_reached = False
         self._parse_failed = False
-        self._policy.reset_repair_count()
 
         system_prompt = self._policy.build_system_prompt(task)
         log("Agent", f"Starting loop, max_steps={self._max_steps}")
