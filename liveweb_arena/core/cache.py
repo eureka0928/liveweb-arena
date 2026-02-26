@@ -207,8 +207,9 @@ def normalize_url(url: str) -> str:
             if '=' in part:
                 key = part.split('=')[0].lower()
                 if key not in tracking:
-                    # Lowercase the entire parameter (key=value)
-                    params.append(part.lower())
+                    # Lowercase key only, preserve value case
+                    value = part.split('=', 1)[1]
+                    params.append(f"{key}={value}")
             else:
                 params.append(part.lower())
         query = '&'.join(sorted(params))

@@ -509,8 +509,7 @@ class BrowserSession:
                 pass
 
             else:
-                # Unknown action type - treat as wait
-                await asyncio.sleep(0.5)
+                raise ValueError(f"Unknown action type: {action_type}")
 
         except Exception as e:
             # Re-raise action execution errors so agent_loop can report failure

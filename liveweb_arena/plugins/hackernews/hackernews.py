@@ -45,8 +45,8 @@ class HackerNewsPlugin(BasePlugin):
         "news.ycombinator.com",
     ]
 
-    # Track legitimate external URLs from HN stories (for anti-cheat)
-    # Maps URL -> story data for validation
+    # Track legitimate external URLs from HN stories (for anti-cheat).
+    # Class variables: cleared between evaluations via clear_external_urls().
     _external_urls: Dict[str, Dict[str, Any]] = {}
     _external_domains: Set[str] = set()
 

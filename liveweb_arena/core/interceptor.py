@@ -369,8 +369,8 @@ class CacheInterceptor:
                 try:
                     if self.url_validator(url):
                         return True
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"URL validator exception for {url}: {e}")
 
             return False
         except Exception:

@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 CACHE_SOURCE = "stooq"
 
-# Rate limit tracking - once hit, don't retry until reset
+# Rate limit tracking - once hit, don't retry until reset.
+# Global by design: the limit is per-API-key, not per-evaluation.
 _rate_limited: bool = False
 
 

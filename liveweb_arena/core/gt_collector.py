@@ -374,7 +374,7 @@ class GTCollector:
             if "stories" in api_data:
                 # Check if this is a category page (ask, show, jobs) or homepage
                 category = api_data.get("category")  # "ask", "show", "jobs", or None
-                if category:
+                if category is not None:
                     # Category page: store under category key ONLY.
                     # Do NOT store as individual entries — category-internal ranks
                     # (rank 1 in Ask != rank 1 on homepage) would contaminate
@@ -447,31 +447,29 @@ class GTCollector:
             from liveweb_arena.core.ground_truth_trigger import GroundTruthResult, GTFailureType
             if isinstance(result, GroundTruthResult):
                 if result.success:
-                    if result.value:  # Only store truthy values
+                    if result.value is not None:
                         self._api_results[tag] = result.value
                         val_str = str(result.value)[:60]
                         log("GT", f"[{tag}] = {val_str}{'...' if len(str(result.value)) > 60 else ''}")
                     else:
-                        # Success but falsy value - treat as system error
                         self._gt_failures[tag] = GroundTruthResult.system_error(
-                            f"success=True but value is falsy: {repr(result.value)}"
+                            f"success=True but value is None"
                         )
-                        log("GT", f"[{tag}] FAILED: success=True but value is falsy: {repr(result.value)}")
+                        log("GT", f"[{tag}] FAILED: success=True but value is None")
                 else:
                     # Store the full result to preserve failure_type
                     self._gt_failures[tag] = result
                     log("GT", f"[{tag}] FAILED: {result.error}")
             else:
-                if result:  # Only store truthy values
+                if result is not None:
                     self._api_results[tag] = result
                     val_str = str(result)[:60]
                     log("GT", f"[{tag}] = {val_str}{'...' if len(str(result)) > 60 else ''}")
                 else:
-                    # Legacy return value (falsy) - treat as data not collected
                     self._gt_failures[tag] = GroundTruthResult.not_collected(
-                        f"returned falsy value: {repr(result)}"
+                        f"returned None"
                     )
-                    log("GT", f"[{tag}] FAILED: returned falsy value: {repr(result)}")
+                    log("GT", f"[{tag}] FAILED: returned None")
 
         except Exception as e:
             # Exception during GT fetch is a system error

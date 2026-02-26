@@ -167,6 +167,8 @@ class AgentLoop:
             if self._on_observation:
                 try:
                     await self._on_observation(obs)
+                except CacheFatalError:
+                    raise
                 except Exception as e:
                     log("Agent", f"Observation callback error: {e}")
 
