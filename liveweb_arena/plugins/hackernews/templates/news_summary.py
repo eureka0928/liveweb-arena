@@ -16,7 +16,7 @@ Evaluation dimensions:
 
 import json
 import random
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
@@ -283,5 +283,3 @@ Calculate weighted total. Output JSON: {{"score": <0.0-1.0>, "reasoning": "<brie
     def get_gt_source(self) -> GTSourceType:
         return self.GT_SOURCE
 
-    def get_page_fields(self) -> List[str]:
-        return ["title", "score", "descendants", "by", "rank"]

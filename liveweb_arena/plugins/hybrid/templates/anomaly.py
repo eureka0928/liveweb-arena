@@ -423,9 +423,6 @@ class HybridAnomalyDetectionTemplate(QuestionTemplate):
     def get_cache_source(cls) -> str:
         return "hybrid"
 
-    def get_api_fields(self):
-        return ["24h_change", "anomaly_detection", "statistics"]
-
     # === Step-wise Reward Interface ===
 
     def get_target_assets(self, validation_info: Dict[str, Any]) -> set:

@@ -423,5 +423,3 @@ class HackerNewsCategoryComparisonTemplate(QuestionTemplate):
     def get_gt_source(self) -> GTSourceType:
         return self.GT_SOURCE
 
-    def get_page_fields(self) -> List[str]:
-        return ["score", "descendants", "rank", "category"]

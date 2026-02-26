@@ -393,9 +393,6 @@ Score: 1.0 for correct asset + value"""
     def get_cache_source(cls) -> str:
         return "hybrid"
 
-    def get_api_fields(self):
-        return ["temperature", "price", "change", "calculation"]
-
     # === Step-wise Reward Interface ===
 
     def get_target_assets(self, validation_info: Dict[str, Any]) -> set:

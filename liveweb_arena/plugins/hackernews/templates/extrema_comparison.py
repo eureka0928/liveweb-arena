@@ -10,7 +10,7 @@ RL-friendly design:
 
 import random
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
@@ -332,5 +332,3 @@ class HackerNewsExtremaComparisonTemplate(QuestionTemplate):
     def get_gt_source(self) -> GTSourceType:
         return self.GT_SOURCE
 
-    def get_page_fields(self) -> List[str]:
-        return ["score", "descendants", "rank"]

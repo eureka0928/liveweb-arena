@@ -10,8 +10,6 @@ from liveweb_arena.core.ground_truth_trigger import (
     UrlPatternTrigger, TriggerConfig, GroundTruthResult
 )
 from liveweb_arena.core.gt_collector import GTSourceType
-from .variables import LocationVariable, LocationSpec, LocationType
-
 
 # Major city pairs from different climate zones for interesting comparisons
 CITY_PAIRS = [

@@ -2,7 +2,7 @@
 
 import random
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
@@ -11,6 +11,7 @@ from liveweb_arena.core.ground_truth_trigger import (
     UrlPatternTrigger, TriggerConfig, GroundTruthResult,
 )
 from liveweb_arena.core.gt_collector import GTSourceType
+from .variables import parse_float
 
 
 class RankingMetric(Enum):
@@ -200,13 +201,6 @@ class StooqRankingTemplate(QuestionTemplate):
             expected_steps=expected_steps,
         )
 
-    def get_expected_steps(self, validation_info: Dict[str, Any]) -> int:
-        """Ranking requires visiting multiple pages - need more steps"""
-        instruments = validation_info.get("instruments", [])
-        num_instruments = len(instruments)
-        # 2 steps per instrument (goto + read) + buffer
-        return num_instruments * 2 + 5
-
     def get_validation_rules(self, validation_info: Dict[str, Any]) -> str:
         metric = validation_info.get("metric", "change_percent")
         direction = validation_info.get("direction", "highest")
@@ -248,8 +242,8 @@ The agent must:
                 f"Available: {list(collected.keys())[:10]}"
             )
 
-        current_price = self._parse_float(data.get("close"))
-        change_percent = self._parse_float(data.get("daily_change_pct"))
+        current_price = parse_float(data.get("close"))
+        change_percent = parse_float(data.get("daily_change_pct"))
 
         if current_price is None:
             return GroundTruthResult.fail(f"Could not parse price for {symbol}")
@@ -259,14 +253,6 @@ The agent must:
             "current_price": current_price,
             "change_percent": change_percent,
         })
-
-    def _parse_float(self, value: Any) -> Optional[float]:
-        if value is None:
-            return None
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return None
 
     async def get_ground_truth(self, validation_info: Dict[str, Any]) -> GroundTruthResult:
         """Calculate ground truth by fetching all instruments and ranking them."""

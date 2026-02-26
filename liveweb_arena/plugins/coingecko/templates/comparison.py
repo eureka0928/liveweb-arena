@@ -1,7 +1,7 @@
 """Price comparison template for CoinGecko - MEDIUM DIFFICULTY"""
 
 import random
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
@@ -11,7 +11,6 @@ from liveweb_arena.core.ground_truth_trigger import (
 )
 from liveweb_arena.core.gt_collector import GTSourceType
 from .price import CoinVariable, CoinSpec
-from ..api_client import CoinGeckoClient
 
 
 @register_template("coingecko_comparison")

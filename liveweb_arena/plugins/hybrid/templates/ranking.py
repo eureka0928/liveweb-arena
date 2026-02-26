@@ -336,14 +336,6 @@ class HybridRankingTemplate(QuestionTemplate):
         trigger = UrlPatternTrigger(domains=["stooq.com"])
         return TriggerConfig(trigger=trigger)
 
-    def get_page_fields(self):
-        """Fields extractable from visited pages."""
-        return ["change_24h", "daily_change_pct"]
-
-    def get_api_fields(self):
-        """Fields that may need API supplement."""
-        return ["change_24h"]
-
     @classmethod
     def get_cache_source(cls) -> str:
         """Return the cache source name for this template."""

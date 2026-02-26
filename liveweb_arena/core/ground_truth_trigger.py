@@ -116,22 +116,6 @@ class GroundTruthResult:
         return self.failure_type == GTFailureType.DATA_NOT_COLLECTED
 
 
-class FetchStrategy(Enum):
-    """
-    DEPRECATED: FetchStrategy is no longer used.
-
-    The GT collection system now uses a simpler approach:
-    - Page extraction happens in real-time during navigation (newer data overwrites older)
-    - API fetching happens at end of trajectory
-
-    This enum is kept for backwards compatibility but has no effect.
-    """
-
-    FIRST = "first"      # Deprecated: was "use first trigger only"
-    LAST = "last"        # Deprecated: was "use last trigger"
-    ALL = "all"          # Deprecated: was "record all"
-
-
 @dataclass
 class TriggerConfig:
     """
@@ -263,80 +247,3 @@ class UrlPatternTrigger(GroundTruthTrigger):
         return f"UrlPatternTrigger({', '.join(parts)})"
 
 
-class UrlWithParamsTrigger(GroundTruthTrigger):
-    """
-    Trigger that requires specific URL parameters.
-
-    Useful when the data source requires specific query parameters.
-
-    Example:
-        UrlWithParamsTrigger(
-            domains=["stooq.com"],
-            required_path="/q/d/",
-            required_params=["s"]  # stock symbol parameter
-        )
-    """
-
-    def __init__(
-        self,
-        domains: List[str],
-        required_path: Optional[str] = None,
-        required_params: Optional[List[str]] = None,
-    ):
-        self.domains = domains
-        self.required_path = required_path
-        self.required_params = required_params or []
-
-    def matches(self, url: str) -> bool:
-        if not url or url == "about:blank":
-            return False
-
-        try:
-            parsed = urlparse(url)
-        except Exception:
-            return False
-
-        # Check domain
-        if not any(d in parsed.netloc for d in self.domains):
-            return False
-
-        # Check path
-        if self.required_path and self.required_path not in parsed.path:
-            return False
-
-        # Check required params
-        if self.required_params:
-            query = parsed.query
-            for param in self.required_params:
-                if f"{param}=" not in query and not query.startswith(f"{param}="):
-                    return False
-
-        return True
-
-    @property
-    def description(self) -> str:
-        return f"UrlWithParamsTrigger(domains={self.domains}, path={self.required_path})"
-
-
-class CompositeTrigger(GroundTruthTrigger):
-    """
-    Combines multiple triggers with OR logic.
-
-    Useful when data can come from multiple sources.
-
-    Example:
-        CompositeTrigger([
-            UrlPatternTrigger(domains=["wttr.in"]),
-            UrlPatternTrigger(domains=["weather.com"]),
-        ])
-    """
-
-    def __init__(self, triggers: List[GroundTruthTrigger]):
-        self.triggers = triggers
-
-    def matches(self, url: str) -> bool:
-        return any(t.matches(url) for t in self.triggers)
-
-    @property
-    def description(self) -> str:
-        return f"CompositeTrigger(OR: {[t.description for t in self.triggers]})"

@@ -140,10 +140,6 @@ class StooqVolatilityTemplate(QuestionTemplate):
             expected_steps=expected_steps,
         )
 
-    def get_expected_steps(self, validation_info: Dict[str, Any]) -> int:
-        instruments = validation_info.get("instruments", [])
-        return len(instruments) * 2 + 5
-
     def get_validation_rules(self, validation_info: Dict[str, Any]) -> str:
         instruments = validation_info.get("instruments", [])
         direction = validation_info.get("direction", "widest")
@@ -285,10 +281,6 @@ class StooqRangePositionTemplate(QuestionTemplate):
             template_name=self.name,
             expected_steps=expected_steps,
         )
-
-    def get_expected_steps(self, validation_info: Dict[str, Any]) -> int:
-        instruments = validation_info.get("instruments", [])
-        return len(instruments) * 2 + 5
 
     def get_validation_rules(self, validation_info: Dict[str, Any]) -> str:
         instruments = validation_info.get("instruments", [])

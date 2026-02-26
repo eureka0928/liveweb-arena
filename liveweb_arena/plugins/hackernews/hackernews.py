@@ -16,7 +16,6 @@ from .api_client import (
     fetch_item_api_data,
     fetch_user_api_data,
 )
-from liveweb_arena.utils.logger import log
 
 
 class HackerNewsPlugin(BasePlugin):
@@ -296,44 +295,6 @@ class HackerNewsPlugin(BasePlugin):
 
         # Unknown HN page type - return empty
         return {}
-
-    async def fetch_external_page_data(self, url: str, html: str) -> Dict[str, Any]:
-        """
-        Extract data from an external page visited via HN link.
-
-        This is called when the agent navigates to an external URL that
-        was linked from an HN story.
-
-        Args:
-            url: The external page URL
-            html: The page HTML content
-
-        Returns:
-            Dict with extracted data (title, etc.)
-        """
-        import re
-
-        data = {
-            "url": url,
-            "is_external": True,
-        }
-
-        # Extract title from HTML
-        title_match = re.search(r'<title[^>]*>([^<]+)</title>', html, re.IGNORECASE)
-        if title_match:
-            title = title_match.group(1).strip()
-            # Clean up common title suffixes
-            title = re.sub(r'\s*[|\-–—]\s*[^|\-–—]+$', '', title).strip()
-            data["title"] = title
-
-        # Get the HN story data that linked to this URL
-        story_data = self._external_urls.get(url)
-        if story_data:
-            data["hn_story_id"] = story_data.get("id")
-            data["hn_story_title"] = story_data.get("title")
-            data["hn_story_rank"] = story_data.get("rank")
-
-        return data
 
     def needs_api_data(self, url: str) -> bool:
         """

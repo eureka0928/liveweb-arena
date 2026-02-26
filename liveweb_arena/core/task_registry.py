@@ -38,10 +38,8 @@ Rules:
 - Always add new templates as a new version entry
 """
 
-import random
 from itertools import combinations
 from typing import Dict, List, Optional, Tuple, Any
-import hashlib
 
 
 class TaskRegistry:
@@ -195,41 +193,6 @@ class TaskRegistry:
         cls._initialized = True
 
     @classmethod
-    def validate_templates(cls) -> List[str]:
-        """
-        Validate that TEMPLATES and TEMPLATE_VERSIONS are consistent.
-
-        Returns:
-            List of error messages (empty if valid)
-        """
-        errors = []
-
-        # Check all template IDs are in TEMPLATE_VERSIONS
-        version_ids = set()
-        for v_ids in cls.TEMPLATE_VERSIONS:
-            version_ids.update(v_ids)
-
-        for tid in cls.TEMPLATES.keys():
-            if tid not in version_ids:
-                errors.append(f"Template ID {tid} not in TEMPLATE_VERSIONS")
-
-        # Check for duplicate IDs across versions
-        seen = set()
-        for v_idx, v_ids in enumerate(cls.TEMPLATE_VERSIONS):
-            for tid in v_ids:
-                if tid in seen:
-                    errors.append(f"Duplicate template ID {tid} in version {v_idx + 1}")
-                seen.add(tid)
-
-        return errors
-
-    @classmethod
-    def get_combinations(cls) -> List[Tuple[int, ...]]:
-        """Get all registered combinations."""
-        cls._ensure_initialized()
-        return cls._combinations.copy()
-
-    @classmethod
     def max_task_id(cls) -> int:
         """Get the maximum valid task_id."""
         cls._ensure_initialized()
@@ -284,81 +247,6 @@ class TaskRegistry:
         }
 
     @classmethod
-    def get_sub_task_seeds(cls, variation_seed: int, num_tasks: int) -> List[int]:
-        """
-        Generate deterministic seeds for each sub-task.
-
-        Args:
-            variation_seed: Base seed from task_id
-            num_tasks: Number of sub-tasks
-
-        Returns:
-            List of seeds, one per sub-task
-        """
-        seeds = []
-        for i in range(num_tasks):
-            # Use hash for stable seed derivation
-            hash_input = f"{variation_seed}:{i}".encode()
-            hash_value = int(hashlib.sha256(hash_input).hexdigest()[:8], 16)
-            seeds.append(hash_value)
-        return seeds
-
-    @classmethod
-    def select_templates_for_tasks(
-        cls,
-        template_ids: Tuple[int, ...],
-        variation_seed: int,
-        num_tasks: int
-    ) -> List[Tuple[str, str]]:
-        """
-        Select which template to use for each sub-task.
-
-        Args:
-            template_ids: Available template IDs for this combination
-            variation_seed: Seed for random selection
-            num_tasks: Number of sub-tasks
-
-        Returns:
-            List of (plugin, template_name) for each sub-task
-        """
-        rng = random.Random(variation_seed)
-
-        selected = []
-        for _ in range(num_tasks):
-            tid = rng.choice(template_ids)
-            selected.append(cls.TEMPLATES[tid])
-
-        return selected
-
-    @classmethod
-    def random_task_id(cls, rng=None) -> int:
-        """
-        Generate a random valid task_id.
-
-        Args:
-            rng: Optional random.Random instance
-
-        Returns:
-            A random task_id in valid range
-        """
-        cls._ensure_initialized()
-
-        if rng is None:
-            rng = random.Random()
-
-        return rng.randint(1, cls.max_task_id())
-
-    @classmethod
-    def get_template_info(cls, template_id: int) -> Optional[Tuple[str, str]]:
-        """Get (plugin, template_name) for a template ID."""
-        return cls.TEMPLATES.get(template_id)
-
-    @classmethod
-    def list_templates(cls) -> Dict[int, Tuple[str, str]]:
-        """List all registered templates."""
-        return cls.TEMPLATES.copy()
-
-    @classmethod
     def get_stats(cls) -> Dict[str, Any]:
         """Get registry statistics."""
         cls._ensure_initialized()
@@ -403,11 +291,6 @@ def parse_task_id(task_id: int) -> Dict[str, Any]:
 def max_task_id() -> int:
     """Get maximum valid task_id."""
     return TaskRegistry.max_task_id()
-
-
-def get_registry_stats() -> Dict[str, Any]:
-    """Get registry statistics."""
-    return TaskRegistry.get_stats()
 
 
 # Initialize on import

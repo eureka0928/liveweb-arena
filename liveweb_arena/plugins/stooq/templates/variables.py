@@ -3,9 +3,19 @@
 import random
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from liveweb_arena.core.validators.base import Variable, VariableType
+
+
+def parse_float(value: Any) -> Optional[float]:
+    """Convert value to float, returning None for missing/invalid data."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
 
 
 class InstrumentType(Enum):
@@ -24,7 +34,6 @@ class PriceMetric(Enum):
     OPEN = "open"
     HIGH = "high"
     LOW = "low"
-    VOLUME = "volume"
 
 
 @dataclass

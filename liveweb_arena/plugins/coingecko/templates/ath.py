@@ -11,7 +11,6 @@ from liveweb_arena.core.ground_truth_trigger import (
     UrlPatternTrigger, TriggerConfig, GroundTruthResult
 )
 from .price import CoinVariable
-from ..api_client import CoinGeckoClient
 
 
 class ATHMetric(Enum):
@@ -297,7 +296,3 @@ class CoinGeckoATHTemplate(QuestionTemplate):
         """ATH data is visible on the coin page."""
         from liveweb_arena.core.gt_collector import GTSourceType
         return GTSourceType.PAGE_ONLY
-
-    def get_page_fields(self):
-        """Fields extractable from CoinGecko page."""
-        return ["ath", "ath_change_percentage"]

@@ -9,12 +9,12 @@ from liveweb_arena.core.validators.base import (
 from liveweb_arena.core.ground_truth_trigger import (
     UrlPatternTrigger, TriggerConfig, GroundTruthResult,
 )
-from liveweb_arena.plugins.stooq.api_client import StooqClient
 from .variables import (
     StockVariable, IndexVariable, CurrencyVariable, CommodityVariable,
     PriceMetricVariable, StockSpec, IndexSpec, CurrencySpec, CommoditySpec,
     MetricSpec, PriceMetric, InstrumentType,
     US_STOCKS, INDICES, CURRENCIES, COMMODITIES,
+    parse_float,
 )
 
 
@@ -229,15 +229,6 @@ class StooqPriceTemplate(QuestionTemplate):
                 return GroundTruthResult.fail("Could not parse close price in collected data")
             return GroundTruthResult.ok(f"{close:.2f}")
 
-    def _parse_float(self, value: Any) -> Optional[float]:
-        """Parse a value to float, returning None if invalid"""
-        if value is None:
-            return None
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return None
-
     async def validate_answer(
         self, answer: str, validation_info: Dict[str, Any]
     ) -> ValidationResult:
@@ -359,10 +350,6 @@ class StooqPriceTemplate(QuestionTemplate):
         """
         from liveweb_arena.core.gt_collector import GTSourceType
         return GTSourceType.PAGE_ONLY
-
-    def get_page_fields(self):
-        """Fields extractable from Stooq page."""
-        return ["last_price", "change_percent", "change_absolute", "open", "high", "low"]
 
     @classmethod
     def get_cache_urls(cls) -> List[str]:

@@ -1,11 +1,10 @@
 """Variable definitions for dynamic question generation"""
 
 import random
-from abc import ABC
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from ....core.validators.base import Variable, VariableType
 

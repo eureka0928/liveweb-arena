@@ -5,69 +5,11 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import aiohttp
-import httpx
-
 from liveweb_arena.plugins.base_client import APIFetchError, BaseAPIClient, RateLimiter, validate_api_response
-from liveweb_arena.utils.logger import log
 
 logger = logging.getLogger(__name__)
 
 CACHE_SOURCE = "weather"
-
-
-class WeatherClient(BaseAPIClient):
-    """wttr.in API client with rate limiting."""
-
-    API_BASE = "https://wttr.in"
-    _rate_limiter = RateLimiter(min_interval=0.5)
-
-    @classmethod
-    def _normalize_location(cls, location: str) -> str:
-        """Normalize location string for cache key matching."""
-        # Convert to lowercase and replace spaces with +
-        normalized = location.lower().strip()
-        normalized = normalized.replace(" ", "+")
-        # Remove trailing country specifications for matching
-        # e.g., "tokyo,japan" and "tokyo" should match
-        return normalized
-
-    @classmethod
-    async def get_weather_data(
-        cls,
-        location: str,
-        timeout: float = 15.0,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Get weather data for a location.
-
-        Args:
-            location: Location query (city name, airport code, etc.)
-            timeout: Request timeout in seconds
-
-        Returns:
-            Weather JSON data or None on error
-        """
-        await cls._rate_limit()
-
-        url = f"{cls.API_BASE}/{location}?format=j1"
-
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get(url)
-                if response.status_code == 404:
-                    logger.warning(f"Weather location not found: {location}")
-                    return None
-                if response.status_code != 200:
-                    logger.warning(f"Weather API error for {location}: {response.status_code}")
-                    return None
-                return response.json()
-
-        except httpx.TimeoutException:
-            logger.warning(f"Weather timeout for {location}")
-            return None
-        except Exception as e:
-            logger.warning(f"Weather error for {location}: {e}")
-            return None
 
 
 # ============================================================

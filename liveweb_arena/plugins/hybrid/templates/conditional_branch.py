@@ -504,10 +504,6 @@ class HybridConditionalBranchTemplate(QuestionTemplate):
         """Return the cache source name for this template."""
         return "hybrid"
 
-    def get_api_fields(self):
-        """All fields require API aggregation."""
-        return ["condition_value", "target_value", "branch_decision"]
-
     # === Step-wise Reward Interface ===
 
     def get_target_assets(self, validation_info: Dict[str, Any]) -> set:

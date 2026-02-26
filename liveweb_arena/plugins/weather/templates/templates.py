@@ -442,10 +442,6 @@ class LocationNameWeatherTemplate(QuestionTemplate):
         from liveweb_arena.core.gt_collector import GTSourceType
         return GTSourceType.PAGE_ONLY
 
-    def get_page_fields(self):
-        """Fields extractable from weather page."""
-        return ["temperature", "humidity", "wind_speed", "feels_like", "precipitation_chance"]
-
     @classmethod
     def get_cache_urls(cls) -> List[str]:
         """
@@ -709,9 +705,6 @@ class CurrentWeatherTemplate(QuestionTemplate):
         from liveweb_arena.core.gt_collector import GTSourceType
         return GTSourceType.PAGE_ONLY
 
-    def get_page_fields(self):
-        """Fields extractable from weather page."""
-        return ["temperature", "humidity", "wind_speed", "feels_like"]
 
 
 class MultiDayQuestionType:
@@ -1043,6 +1036,3 @@ class MultiDayWeatherTemplate(QuestionTemplate):
         from liveweb_arena.core.gt_collector import GTSourceType
         return GTSourceType.PAGE_ONLY
 
-    def get_page_fields(self):
-        """Fields extractable from weather page."""
-        return ["temperature_high", "temperature_low", "precipitation_chance"]

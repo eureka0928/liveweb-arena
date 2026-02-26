@@ -1,6 +1,5 @@
 """Variables for Taostats question templates"""
 
-import asyncio
 import random
 from dataclasses import dataclass
 from enum import Enum
@@ -44,20 +43,6 @@ class MetricSpec:
 # Cache for subnet data to avoid repeated API calls
 _subnet_ids_cache: Optional[List[int]] = None
 _subnet_names_cache: Dict[int, str] = {}
-
-
-def _run_async(coro):
-    """Run async function synchronously."""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If we're already in an async context, we can't use run_until_complete
-            # Return empty result and let the caller handle it
-            return None
-        return loop.run_until_complete(coro)
-    except RuntimeError:
-        # No event loop, create a new one
-        return asyncio.run(coro)
 
 
 def _fetch_active_subnet_ids() -> List[int]:

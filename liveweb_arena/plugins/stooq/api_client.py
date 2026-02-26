@@ -1,8 +1,6 @@
 """Stooq API client with caching support"""
 
 import asyncio
-import csv
-import io
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -22,17 +20,6 @@ _rate_limited: bool = False
 class StooqRateLimitError(Exception):
     """Raised when Stooq API rate limit is exceeded."""
     pass
-
-
-def is_stooq_rate_limited() -> bool:
-    """Check if Stooq API is currently rate limited."""
-    return _rate_limited
-
-
-def reset_stooq_rate_limit():
-    """Reset rate limit flag (e.g., after daily reset)."""
-    global _rate_limited
-    _rate_limited = False
 
 
 def _parse_stooq_csv(csv_text: str, symbol: str = "") -> Optional[Dict[str, Any]]:
@@ -190,46 +177,6 @@ class StooqClient(BaseAPIClient):
             return None
         except Exception as e:
             logger.warning(f"Stooq error for {symbol}: {e}")
-            return None
-
-    @classmethod
-    async def get_historical_data(
-        cls,
-        symbol: str,
-        timeout: float = 15.0,
-    ) -> Optional[list]:
-        """
-        Get historical price data for a symbol.
-
-        Args:
-            symbol: Stooq symbol
-            timeout: Request timeout in seconds
-
-        Returns:
-            List of daily price records or None on error
-        """
-        # Historical data is not cached (too large), always fetch live
-        await cls._rate_limit()
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                params = {"s": symbol, "i": "d"}
-                async with session.get(
-                    cls.CSV_URL,
-                    params=params,
-                    timeout=aiohttp.ClientTimeout(total=timeout),
-                ) as response:
-                    if response.status != 200:
-                        return None
-                    csv_text = await response.text()
-
-            # Normalize line endings (Windows -> Unix)
-            csv_text = csv_text.replace("\r\n", "\n").replace("\r", "\n")
-            reader = csv.DictReader(io.StringIO(csv_text))
-            return list(reader)
-
-        except Exception as e:
-            logger.warning(f"Stooq historical error for {symbol}: {e}")
             return None
 
 

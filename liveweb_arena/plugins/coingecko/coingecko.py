@@ -10,7 +10,6 @@ from urllib.parse import urlparse
 
 from liveweb_arena.plugins.base import BasePlugin
 from .api_client import fetch_single_coin_data, fetch_homepage_api_data
-from liveweb_arena.utils.logger import log
 
 
 # URL slug to API coin ID mapping for coins where they differ

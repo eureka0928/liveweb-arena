@@ -12,7 +12,6 @@ from liveweb_arena.core.validators.base import (
 from liveweb_arena.core.ground_truth_trigger import (
     UrlPatternTrigger, TriggerConfig, GroundTruthResult
 )
-from ..api_client import CoinGeckoClient
 
 
 class PriceMetric(Enum):
@@ -523,10 +522,6 @@ class CoinGeckoPriceTemplate(QuestionTemplate):
         """
         from liveweb_arena.core.gt_collector import GTSourceType
         return GTSourceType.PAGE_ONLY
-
-    def get_page_fields(self):
-        """Fields extractable from CoinGecko page."""
-        return ["current_price", "change_24h", "market_cap"]
 
     @classmethod
     def get_cache_urls(cls) -> List[str]:

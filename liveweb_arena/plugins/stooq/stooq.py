@@ -10,7 +10,6 @@ from urllib.parse import urlparse, parse_qs
 
 from liveweb_arena.plugins.base import BasePlugin
 from .api_client import fetch_single_asset_data, fetch_homepage_api_data
-from liveweb_arena.utils.logger import log
 
 
 class StooqPlugin(BasePlugin):

@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Callable, Type, TYPE_CHECKING, Union
+from typing import Any, Dict, List, Optional, Type, TYPE_CHECKING, Union
 import random
 
 if TYPE_CHECKING:
@@ -252,22 +252,6 @@ class QuestionTemplate(ABC):
         # Default: no special rules
         return ""
 
-    def get_expected_steps(self, validation_info: Dict[str, Any]) -> int:
-        """
-        Get the expected number of steps to complete this question.
-
-        Override this method for complex questions that require more steps.
-        This helps set appropriate limits for evaluation.
-
-        Args:
-            validation_info: Information about the question
-
-        Returns:
-            Expected number of browser interaction steps
-        """
-        # Default: 10 steps for simple questions
-        return 10
-
     def get_ground_truth_trigger(
         self,
         validation_info: Dict[str, Any]
@@ -301,30 +285,6 @@ class QuestionTemplate(ABC):
         """
         from ..gt_collector import GTSourceType
         return getattr(self.__class__, 'GT_SOURCE', GTSourceType.PAGE_ONLY)
-
-    def get_page_fields(self) -> List[str]:
-        """
-        Return list of fields that can be extracted from page content.
-
-        Override this for HYBRID templates to specify which fields
-        come from page extraction.
-
-        Returns:
-            List of field names extractable from page
-        """
-        return []
-
-    def get_api_fields(self) -> List[str]:
-        """
-        Return list of fields that require API fetching.
-
-        Override this for HYBRID templates to specify which fields
-        come from API calls.
-
-        Returns:
-            List of field names requiring API
-        """
-        return []
 
     # === Cache Registration Methods ===
     # Templates should override these methods to define their cache requirements.
@@ -468,17 +428,3 @@ class QuestionTemplate(ABC):
         }
 
 
-@dataclass
-class CompositeQuestion:
-    """
-    A composite question combining multiple sub-questions.
-
-    Used for multi-part questions that require validating
-    multiple answers together.
-    """
-    questions: List[GeneratedQuestion]
-    combined_text: str
-
-    def get_validation_infos(self) -> List[Dict[str, Any]]:
-        """Get validation info for all sub-questions"""
-        return [q.validation_info for q in self.questions]

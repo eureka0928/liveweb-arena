@@ -373,9 +373,6 @@ Score: 1.0 for correct path + value, 0.5 for correct path only"""
     def get_cache_source(cls) -> str:
         return "hybrid"
 
-    def get_api_fields(self):
-        return ["24h_change", "price", "decision_tree"]
-
     # === Step-wise Reward Interface ===
 
     def get_target_assets(self, validation_info: Dict[str, Any]) -> set:

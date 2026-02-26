@@ -17,7 +17,6 @@ from .base import (
     Validator,
     ValidationResult,
     GeneratedQuestion,
-    CompositeQuestion,
 )
 from .validators import (
     NumericToleranceValidator,
@@ -39,7 +38,6 @@ __all__ = [
     "Validator",
     "ValidationResult",
     "GeneratedQuestion",
-    "CompositeQuestion",
     # Generic validators
     "NumericToleranceValidator",
     "ExactMatchValidator",

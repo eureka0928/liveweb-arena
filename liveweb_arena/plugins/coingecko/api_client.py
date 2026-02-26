@@ -128,27 +128,6 @@ class CoinGeckoClient(BaseAPIClient):
         }
         return await cls.get("/coins/markets", params)
 
-    @classmethod
-    async def get_simple_price(
-        cls,
-        coin_ids: str,
-        vs_currencies: str = "usd",
-    ) -> Optional[dict]:
-        """
-        Get simple price data for specified coins.
-
-        Args:
-            coin_ids: Comma-separated coin IDs (e.g., "bitcoin,ethereum")
-            vs_currencies: Comma-separated currencies (e.g., "usd,eur")
-
-        Returns:
-            Dict of prices or None
-        """
-        params = {
-            "ids": coin_ids,
-            "vs_currencies": vs_currencies,
-        }
-        return await cls.get("/simple/price", params)
 
 
 # ============================================================

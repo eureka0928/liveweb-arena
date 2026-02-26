@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
-from liveweb_arena.core.ground_truth_trigger import UrlPatternTrigger, TriggerConfig
+from liveweb_arena.core.ground_truth_trigger import TriggerConfig
 from liveweb_arena.utils.logger import log
 
 if TYPE_CHECKING:
@@ -109,17 +109,6 @@ class GTCollector:
             return plugin.get_gt_source(subtask.validation_info)
 
         return GTSourceType.API_ONLY
-
-    def _get_trigger_config(self, subtask: "SubTask") -> Optional["TriggerConfig"]:
-        """Get trigger configuration for a subtask."""
-        if self._task_manager is None:
-            return None
-
-        plugin = self._task_manager.get_plugin(subtask.plugin_name)
-        if plugin is None:
-            return None
-
-        return plugin.get_ground_truth_trigger(subtask.validation_info)
 
     async def on_page_visit(
         self,
@@ -426,10 +415,6 @@ class GTCollector:
     def get_collected_api_data(self) -> Dict[str, Dict[str, Any]]:
         """Get all collected API data from page visits."""
         return self._collected_api_data
-
-    def get_page_contents(self) -> Dict[str, str]:
-        """Get all page contents (accessibility trees) from visits."""
-        return self._page_contents
 
     async def _fetch_api_gt(self, subtask: "SubTask"):
         """Fetch GT from API for a subtask."""

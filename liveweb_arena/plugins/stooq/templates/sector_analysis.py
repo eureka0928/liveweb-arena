@@ -12,6 +12,7 @@ from liveweb_arena.core.ground_truth_trigger import (
     UrlPatternTrigger, TriggerConfig, GroundTruthResult,
 )
 from liveweb_arena.core.gt_collector import GTSourceType
+from .variables import parse_float
 
 
 class ComparisonMetric(Enum):
@@ -114,8 +115,6 @@ class StooqSectorAnalysisTemplate(QuestionTemplate):
     """
 
     GT_SOURCE = GTSourceType.API_ONLY  # Cross-sector multi-asset comparison
-
-    STOOQ_CSV_URL = "https://stooq.com/q/d/l/"
 
     def __init__(self):
         super().__init__("stooq_sector_analysis")
@@ -247,12 +246,6 @@ class StooqSectorAnalysisTemplate(QuestionTemplate):
 
         return rng.choice(patterns)
 
-    def get_expected_steps(self, validation_info: Dict[str, Any]) -> int:
-        """Calculate expected steps"""
-        group1 = validation_info.get("group1_instruments", [])
-        group2 = validation_info.get("group2_instruments", [])
-        return (len(group1) + len(group2)) * 2 + 5
-
     def get_validation_rules(self, validation_info: Dict[str, Any]) -> str:
         names1 = validation_info.get("group1_names", [])
         names2 = validation_info.get("group2_names", [])
@@ -293,14 +286,6 @@ The agent MUST report individual percentage changes for verification."""
             return GroundTruthResult.fail(f"No daily_change_pct in collected data for {symbol}")
 
         return GroundTruthResult.ok(change_pct)
-
-    def _parse_float(self, value: Any) -> Optional[float]:
-        if value is None:
-            return None
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return None
 
     async def _fetch_all_ground_truth(
         self, validation_info: Dict[str, Any]

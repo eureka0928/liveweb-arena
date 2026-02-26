@@ -84,14 +84,6 @@ class HackerNewsClient(BaseAPIClient):
         return []
 
     @classmethod
-    async def get_new_stories(cls, limit: int = 30) -> List[int]:
-        """Get new story IDs."""
-        data = await cls.get("/newstories.json")
-        if data and isinstance(data, list):
-            return data[:limit]
-        return []
-
-    @classmethod
     async def get_ask_stories(cls, limit: int = 30) -> List[int]:
         """Get Ask HN story IDs."""
         data = await cls.get("/askstories.json")

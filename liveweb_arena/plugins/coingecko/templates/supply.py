@@ -2,7 +2,7 @@
 
 import random
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
@@ -11,7 +11,6 @@ from liveweb_arena.core.ground_truth_trigger import (
     UrlPatternTrigger, TriggerConfig, GroundTruthResult
 )
 from .price import CoinVariable, CoinSpec
-from ..api_client import CoinGeckoClient
 
 
 class SupplyMetric(Enum):
@@ -337,7 +336,3 @@ class CoinGeckoSupplyTemplate(QuestionTemplate):
         """Supply data is visible on the coin page."""
         from liveweb_arena.core.gt_collector import GTSourceType
         return GTSourceType.PAGE_ONLY
-
-    def get_page_fields(self):
-        """Fields extractable from CoinGecko page."""
-        return ["circulating_supply", "total_supply", "max_supply"]

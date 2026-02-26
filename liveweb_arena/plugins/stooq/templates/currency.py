@@ -51,8 +51,6 @@ class StooqCurrencyTemplate(QuestionTemplate):
         ],
     }
 
-    STOOQ_CSV_URL = "https://stooq.com/q/d/l/"
-
     def __init__(self):
         super().__init__("stooq_currency")
 
@@ -295,7 +293,3 @@ The agent must:
         """Exchange rate is visible on the currency pair page."""
         from liveweb_arena.core.gt_collector import GTSourceType
         return GTSourceType.PAGE_ONLY
-
-    def get_page_fields(self):
-        """Fields extractable from Stooq page."""
-        return ["current_price", "change_percent"]

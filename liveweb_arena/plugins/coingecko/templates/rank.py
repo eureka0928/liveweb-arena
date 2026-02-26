@@ -1,7 +1,7 @@
 """Market rank query template for CoinGecko - HIGH DIFFICULTY"""
 
 import random
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
@@ -9,8 +9,7 @@ from liveweb_arena.core.validators.base import (
 from liveweb_arena.core.ground_truth_trigger import (
     UrlPatternTrigger, TriggerConfig, GroundTruthResult
 )
-from .price import CoinVariable, CoinSpec
-from ..api_client import CoinGeckoClient
+from .price import CoinVariable
 
 
 @register_template("coingecko_rank")
@@ -177,7 +176,3 @@ class CoinGeckoRankTemplate(QuestionTemplate):
         """Market cap rank is visible on the coin page."""
         from liveweb_arena.core.gt_collector import GTSourceType
         return GTSourceType.PAGE_ONLY
-
-    def get_page_fields(self):
-        """Fields extractable from CoinGecko page."""
-        return ["market_cap_rank"]

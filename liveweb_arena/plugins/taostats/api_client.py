@@ -220,25 +220,6 @@ def get_cached_subnets() -> Dict[str, Any]:
     return _subnet_cache or {}
 
 
-async def get_active_subnet_ids() -> List[int]:
-    """Get list of active subnet IDs."""
-    subnets = await _ensure_subnet_cache()
-    return [int(k) for k in subnets.keys() if k != "0"]
-
-
-async def get_subnet_name(subnet_id: int) -> str:
-    """Get subnet name by ID."""
-    subnets = await _ensure_subnet_cache()
-    subnet = subnets.get(str(subnet_id), {})
-    return subnet.get("name", "")
-
-
-async def get_subnet_data(subnet_id: int) -> Dict[str, Any]:
-    """Get full subnet data by ID."""
-    subnets = await _ensure_subnet_cache()
-    return subnets.get(str(subnet_id), {})
-
-
 def _normalize_emission(subnets: Dict[str, Any]) -> Dict[str, Any]:
     """Ensure emission values are percentages (sum to ~100), not absolute TAO.
 
@@ -274,12 +255,6 @@ def _filter_by_emission(subnets: Dict[str, Any]) -> Dict[str, Any]:
     filtered = dict(ranked[:keep])
     log("Filter", f"Emission top-half: {len(subnets)} → {len(filtered)} subnets")
     return filtered
-
-
-def clear_cache():
-    """Clear the subnet cache."""
-    global _subnet_cache
-    _subnet_cache = None
 
 
 def initialize_cache():

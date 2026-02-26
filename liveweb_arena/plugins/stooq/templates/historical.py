@@ -3,7 +3,6 @@
 import random
 from enum import Enum
 from typing import Any, Dict, List, Optional
-from datetime import datetime, timedelta
 
 from liveweb_arena.core.validators.base import (
     QuestionTemplate, GeneratedQuestion, ValidationResult, register_template,
@@ -15,6 +14,7 @@ from liveweb_arena.core.gt_collector import GTSourceType
 from .variables import (
     StockVariable, IndexVariable, US_STOCKS, INDICES,
     StockSpec, IndexSpec, InstrumentType,
+    parse_float,
 )
 
 
@@ -63,8 +63,6 @@ class StooqHistoricalTemplate(QuestionTemplate):
             "Find the difference between the highest and lowest closing prices of {instrument} over {days} trading days.",
         ],
     }
-
-    STOOQ_CSV_URL = "https://stooq.com/q/d/l/"
 
     def __init__(self):
         super().__init__("stooq_historical")
@@ -215,14 +213,6 @@ class StooqHistoricalTemplate(QuestionTemplate):
             return GroundTruthResult.fail(f"Unknown query type: {query_type}")
 
         return GroundTruthResult.ok(f"{result:.2f}")
-
-    def _parse_float(self, value: Any) -> Optional[float]:
-        if value is None:
-            return None
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return None
 
     async def validate_answer(
         self, answer: str, validation_info: Dict[str, Any]

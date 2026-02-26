@@ -339,13 +339,6 @@ class CacheInterceptor:
                 return True
         return False
 
-    def _is_static(self, url: str) -> bool:
-        """Check if URL is a static resource."""
-        for pattern in self._static_patterns:
-            if pattern.search(url):
-                return True
-        return False
-
     def _is_domain_allowed(self, url: str) -> bool:
         """Check if URL's domain is allowed."""
         if not self.allowed_domains and not self.url_validator:
@@ -395,10 +388,6 @@ class CacheInterceptor:
     def get_stats(self) -> dict:
         """Get interception statistics."""
         return self.stats.to_dict()
-
-    def reset_stats(self):
-        """Reset statistics."""
-        self.stats = InterceptorStats()
 
     def cleanup(self):
         """

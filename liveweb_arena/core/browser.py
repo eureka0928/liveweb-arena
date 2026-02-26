@@ -44,65 +44,6 @@ class BrowserSession:
         self._allowed_domains = None  # None means allow all
         self._cache_interceptor: Optional["CacheInterceptor"] = None
 
-    async def set_allowed_domains(self, domains: list):
-        """
-        Set whitelist of allowed domains.
-
-        Only requests to these domains will be allowed. All other requests
-        will be blocked. This prevents agents from cheating by visiting
-        external websites, search engines, or AI services.
-
-        Note: If snapshot interceptor is set, it handles all routing including
-        domain filtering. This method is only used when no interceptor is active.
-
-        Args:
-            domains: List of allowed domain names (without protocol)
-                    Example: ["wttr.in", "coingecko.com"]
-        """
-        from urllib.parse import urlparse
-
-        self._allowed_domains = set(d.lower() for d in domains)
-
-        # If cache interceptor is set, it handles routing
-        if self._cache_interceptor:
-            return
-
-        session = self  # Capture reference for closure
-
-        async def check_domain(route):
-            url = route.request.url
-
-            # Always allow about:blank
-            if url == "about:blank" or url.startswith("about:"):
-                await route.continue_()
-                return
-
-            try:
-                parsed = urlparse(url)
-                domain = parsed.netloc.lower()
-                # Remove port if present
-                if ":" in domain:
-                    domain = domain.split(":")[0]
-
-                # Check if domain or any parent domain is allowed
-                is_allowed = False
-                for allowed in session._allowed_domains:
-                    if domain == allowed or domain.endswith("." + allowed):
-                        is_allowed = True
-                        break
-
-                if not is_allowed:
-                    await route.abort("blockedbyclient")
-                    return
-
-                await route.continue_()
-
-            except Exception:
-                await route.abort("blockedbyclient")
-
-        # Intercept all requests
-        await self._context.route("**/*", check_domain)
-
     async def block_urls(self, patterns: list):
         """
         Block URLs matching the given patterns.
@@ -152,12 +93,6 @@ class BrowserSession:
 
         # Route all requests through the interceptor
         await self._context.route("**/*", interceptor.handle_route)
-
-    def get_interceptor_stats(self) -> Optional[dict]:
-        """Get cache interception statistics."""
-        if hasattr(self, '_cache_interceptor') and self._cache_interceptor:
-            return self._cache_interceptor.get_stats()
-        return None
 
     async def goto(self, url: str) -> BrowserObservation:
         """Navigate to URL and return observation.

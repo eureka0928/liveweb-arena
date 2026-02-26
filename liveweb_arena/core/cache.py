@@ -22,11 +22,10 @@ import json
 import logging
 import re
 import time
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import unquote, urlparse
 
 if TYPE_CHECKING:
     from liveweb_arena.plugins.base import BasePlugin
@@ -113,18 +112,6 @@ class PageRequirement:
     def data(url: str) -> "PageRequirement":
         """Create data page requirement (HTML + API)."""
         return PageRequirement(url, need_api=True)
-
-
-@contextmanager
-def file_lock(lock_path: Path):
-    """Cross-process file lock (synchronous, for short operations only)."""
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, 'w') as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 async def async_file_lock_acquire(lock_path: Path, timeout: float = 60.0) -> int:
@@ -557,21 +544,3 @@ class CacheManager:
         except Exception:
             return None
 
-
-# Global instance
-_cache_manager: Optional[CacheManager] = None
-
-
-def get_cache_manager() -> CacheManager:
-    """Get global cache manager instance."""
-    global _cache_manager
-    if _cache_manager is None:
-        cache_dir = Path(__file__).parent.parent.parent / "cache"
-        _cache_manager = CacheManager(cache_dir)
-    return _cache_manager
-
-
-def set_cache_manager(manager: CacheManager):
-    """Set global cache manager instance."""
-    global _cache_manager
-    _cache_manager = manager

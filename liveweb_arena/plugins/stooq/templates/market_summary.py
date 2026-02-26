@@ -11,7 +11,7 @@ from liveweb_arena.core.ground_truth_trigger import (
     UrlPatternTrigger, TriggerConfig, GroundTruthResult,
 )
 from liveweb_arena.core.gt_collector import GTSourceType
-from .variables import INDICES, US_STOCKS
+from .variables import INDICES, US_STOCKS, parse_float
 
 
 class MarketSummaryType(Enum):
@@ -62,8 +62,6 @@ class StooqMarketSummaryTemplate(QuestionTemplate):
         MarketSummaryType.TECH_STOCKS: ["aapl.us", "msft.us", "nvda.us", "googl.us"],
         MarketSummaryType.MARKET_TREND: ["^dji", "^spx", "^ndx"],
     }
-
-    STOOQ_CSV_URL = "https://stooq.com/q/d/l/"
 
     def __init__(self):
         super().__init__("stooq_market_summary")
@@ -176,14 +174,6 @@ Key validation points:
         }
 
         return GroundTruthResult.ok(result)
-
-    def _parse_float(self, value: Any) -> Optional[float]:
-        if value is None:
-            return None
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return None
 
     async def get_ground_truth(self, validation_info: Dict[str, Any]) -> GroundTruthResult:
         """
