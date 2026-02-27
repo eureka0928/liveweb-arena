@@ -1,11 +1,12 @@
 """LLM-based answer validator for flexible answer matching"""
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, List, Optional
 import json
 import re
 
 from .base import ValidationResult
+from ...utils.logger import log
 
 
 @dataclass
@@ -40,6 +41,14 @@ DEFAULT_TASK_RULES = """Task-Specific Rules:
 
 # Note: NO_GROUND_TRUTH_PROMPT removed - ground truth is always required
 
+# Validation models tried in order. If one fails, the next is used.
+VALIDATION_MODELS: List[str] = [
+    "openai/gpt-oss-120b-TEE",
+    "Qwen/Qwen3-235B-A22B-Instruct-2507-TEE",
+    "Qwen/Qwen2.5-72B-Instruct",
+    "Qwen/Qwen3-32B",
+]
+
 
 class LLMValidator:
     """
@@ -64,18 +73,19 @@ class LLMValidator:
         expected: Any,
         actual: Any,
         task_specific_rules: str = "",
-        model: str = "zai-org/GLM-4.7",
         temperature: float = 0.0,
     ) -> LLMValidationResult:
         """
-        Validate answer using LLM.
+        Validate answer using LLM with automatic model fallback.
+
+        Tries each model in VALIDATION_MODELS in order. If one model fails
+        (503, rate limit, timeout, etc.), the next model is tried.
 
         Args:
             question: The original question/task
             expected: Expected answer (ground truth)
             actual: Actual answer from the agent
             task_specific_rules: Task-specific validation rules from template
-            model: LLM model to use for validation
             temperature: LLM temperature (0 for deterministic)
 
         Returns:
@@ -112,30 +122,36 @@ class LLMValidator:
             task_specific_rules=rules,
         )
 
-        try:
-            # Call LLM for validation
-            response, _ = await self._llm_client.chat(
-                system="You are a precise answer validator. Output only valid JSON.",
-                user=prompt,
-                model=model,
-                temperature=temperature,
-            )
+        # Try each validation model in order
+        last_error = None
+        for model in VALIDATION_MODELS:
+            try:
+                response, _ = await self._llm_client.chat(
+                    system="You are a precise answer validator. Output only valid JSON.",
+                    user=prompt,
+                    model=model,
+                    temperature=temperature,
+                )
 
-            # Parse response
-            result = self._parse_response(response)
+                result = self._parse_response(response)
 
-            return LLMValidationResult(
-                score=result["score"],
-                is_correct=result["score"] >= 0.8,
-                expected=expected,
-                actual=actual,
-                reasoning=result["reasoning"],
-            )
+                return LLMValidationResult(
+                    score=result["score"],
+                    is_correct=result["score"] >= 0.8,
+                    expected=expected,
+                    actual=actual,
+                    reasoning=result["reasoning"],
+                )
 
-        except Exception as e:
-            # LLM validation failure - cannot determine score reliably
-            # Re-raise to signal system error rather than give potentially wrong score
-            raise RuntimeError(f"LLM validation failed: {e}") from e
+            except Exception as e:
+                last_error = e
+                log("Validator", f"Model {model} failed: {e}, trying next")
+                continue
+
+        # All models exhausted
+        raise RuntimeError(
+            f"All validation models failed. Last error: {last_error}"
+        ) from last_error
 
     def _parse_response(self, response: str) -> dict:
         """Parse LLM response to extract score and reasoning"""
@@ -187,12 +203,12 @@ async def validate_answers_with_llm(
     answers: dict,
     ground_truths: dict,
     validation_rules: dict = None,
-    model: str = "zai-org/GLM-4.7",
-    validation_model: str = None,
     parallel: bool = True,
 ) -> list:
     """
-    Validate multiple answers using LLM.
+    Validate multiple answers using LLM with automatic model fallback.
+
+    Models are defined in VALIDATION_MODELS and tried in order per validation call.
 
     Args:
         llm_client: LLM client for validation calls
@@ -200,8 +216,6 @@ async def validate_answers_with_llm(
         answers: Dict of answer_tag -> answer from agent
         ground_truths: Dict of answer_tag -> ground truth value
         validation_rules: Dict of answer_tag -> task-specific validation rules
-        model: Default LLM model (fallback if validation_model not set)
-        validation_model: Specific model for validation (recommended: fast model)
         parallel: Whether to validate answers in parallel (default: True)
 
     Returns:
@@ -211,9 +225,6 @@ async def validate_answers_with_llm(
 
     validator = LLMValidator(llm_client)
     validation_rules = validation_rules or {}
-
-    # Use validation_model if provided, otherwise fall back to model
-    actual_model = validation_model or model
 
     async def validate_single(subtask):
         """Validate a single subtask answer"""
@@ -228,7 +239,6 @@ async def validate_answers_with_llm(
             expected=expected,
             actual=actual,
             task_specific_rules=task_rules,
-            model=actual_model,
         )
 
         return {

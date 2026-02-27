@@ -93,12 +93,6 @@ async def main():
         help="LLM temperature (default: 0.0)",
     )
     parser.add_argument(
-        "--validation-model",
-        type=str,
-        default="openai/gpt-oss-120b-TEE",
-        help="Model for answer validation (default: openai/gpt-oss-120b-TEE)",
-    )
-    parser.add_argument(
         "--output",
         type=str,
         default=None,
@@ -213,7 +207,6 @@ async def main():
             max_steps=args.max_steps,
             timeout=args.timeout,
             temperature=args.temperature,
-            validation_model=args.validation_model,
             task_id=args.task_id,
         )
 

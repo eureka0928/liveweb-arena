@@ -161,7 +161,6 @@ class Actor:
         timeout: int = 3600,
         temperature: float = 0.7,
         max_concurrency: int = 2,
-        validation_model: Optional[str] = None,
         task_id: Optional[int] = None,
     ) -> dict:
         """
@@ -178,7 +177,6 @@ class Actor:
             timeout: Total wall-clock budget in seconds
             temperature: LLM temperature
             max_concurrency: Container-local concurrency limit
-            validation_model: Model for answer validation (default: same as model)
             task_id: Optional task ID for deterministic question type
 
         Returns:
@@ -224,7 +222,6 @@ class Actor:
                     max_steps=max_steps,
                     timeout=timeout,
                     temperature=temperature,
-                    validation_model=validation_model,
                     task_id=task_id,
                 )
             except Exception as e:
@@ -257,7 +254,6 @@ class Actor:
         max_steps: Optional[int],
         timeout: int,
         temperature: float,
-        validation_model: Optional[str] = None,
         task_id: Optional[int] = None,
     ) -> dict:
         """Internal evaluation logic."""
@@ -565,15 +561,12 @@ class Actor:
             answer_validations = pre_failed_validations.copy()
 
             if subtasks_to_validate:
-                actual_validation_model = validation_model or "zai-org/GLM-4.7"
                 llm_validations = await validate_answers_with_llm(
                     llm_client=llm_client,
                     subtasks=subtasks_to_validate,
                     answers=parsed_answers,
                     ground_truths=ground_truths,
                     validation_rules=validation_rules,
-                    model=model,
-                    validation_model=actual_validation_model,
                 )
                 answer_validations.extend(llm_validations)
 
