@@ -56,6 +56,56 @@ def _url_matches_domain(url: str, allowed_domain: str) -> bool:
         return False
 
 
+def _find_plugin_for_url(plugins_used: Dict[str, "BasePlugin"], url: str) -> Optional["BasePlugin"]:
+    """Find the plugin that handles this URL (domain match + dynamic validation)."""
+    for p in plugins_used.values():
+        for domain in p.allowed_domains:
+            if _url_matches_domain(url, domain):
+                return p
+    for p in plugins_used.values():
+        if hasattr(p, 'is_url_allowed') and p.is_url_allowed(url):
+            return p
+    return None
+
+
+async def _handle_navigation_event(interceptor, cached_pages, plugins_used, url, use_cache):
+    """Navigation handler: error propagation + external URL extraction."""
+    if not use_cache:
+        return
+    interceptor.raise_if_error(url=url)
+    normalized = normalize_url(url)
+    cached_page = cached_pages.get(normalized)
+    if cached_page and cached_page.api_data:
+        plugin = _find_plugin_for_url(plugins_used, url)
+        if plugin and hasattr(plugin, '_extract_external_urls'):
+            plugin._extract_external_urls(cached_page.api_data)
+
+
+async def _handle_observation_event(interceptor, cached_pages, plugins_used, gt_collector, obs, use_cache):
+    """Observation handler: error propagation + GT data collection."""
+    if use_cache:
+        interceptor.raise_if_error()
+    if not obs or not obs.url or obs.url == "about:blank":
+        return
+    url = obs.url
+    api_data = None
+    if use_cache:
+        normalized = normalize_url(url)
+        cached_page = cached_pages.get(normalized)
+        if cached_page:
+            api_data = cached_page.api_data
+    else:
+        plugin = _find_plugin_for_url(plugins_used, url)
+        if plugin and plugin.needs_api_data(url):
+            try:
+                api_data = await plugin.fetch_api_data(url)
+            except Exception as e:
+                raise CacheFatalError(f"LIVE mode API fetch failed (GT invalid): {e}", url=url)
+            if not api_data:
+                raise CacheFatalError(f"LIVE mode API returned empty data (GT invalid)", url=url)
+    await gt_collector.on_page_visit(url, obs.accessibility_tree, api_data=api_data)
+
+
 @dataclass
 class EpisodeState:
     """Internal state for a training episode."""
@@ -148,6 +198,48 @@ class Actor:
             else:
                 cache_dir = Path("/var/lib/liveweb-arena/cache")
         self.cache_manager = CacheManager(cache_dir)
+
+    def _collect_plugin_info(self, task: CompositeTask):
+        """Collect plugins, domains, patterns from task."""
+        allowed_domains: Set[str] = set()
+        blocked_patterns: List[str] = []
+        plugins_used: Dict[str, BasePlugin] = {}
+        for subtask in task.subtasks:
+            plugin = self.task_manager.get_plugin(subtask.plugin_name)
+            if plugin:
+                plugins_used[subtask.plugin_name] = plugin
+                if hasattr(plugin, 'allowed_domains'):
+                    allowed_domains.update(plugin.allowed_domains)
+                if hasattr(plugin, 'get_blocked_patterns'):
+                    blocked_patterns.extend(plugin.get_blocked_patterns())
+                elif hasattr(plugin, 'blocked_url_patterns'):
+                    blocked_patterns.extend(plugin.blocked_url_patterns)
+                if hasattr(plugin, 'clear_external_urls'):
+                    plugin.clear_external_urls()
+        return plugins_used, allowed_domains, list(set(blocked_patterns))
+
+    async def _setup_interceptor(self, session, cached_pages, allowed_domains, blocked_patterns, plugins_used):
+        """Create and install CacheInterceptor. Returns interceptor."""
+        def url_validator(url):
+            for p in plugins_used.values():
+                if hasattr(p, 'is_url_allowed') and p.is_url_allowed(url):
+                    return True
+            return False
+
+        plugin_resolver = (lambda url: _find_plugin_for_url(plugins_used, url)) if self.use_cache else None
+        interceptor = CacheInterceptor(
+            cached_pages=cached_pages,
+            allowed_domains=allowed_domains,
+            blocked_patterns=blocked_patterns or None,
+            cache_manager=self.cache_manager if self.use_cache else None,
+            url_validator=url_validator,
+            plugin_resolver=plugin_resolver,
+        )
+        if self.use_cache:
+            await session.set_cache_interceptor(interceptor)
+        if not self.use_cache and blocked_patterns:
+            await session.block_urls(blocked_patterns)
+        return interceptor
 
     async def evaluate(
         self,
@@ -277,26 +369,7 @@ class Actor:
             effective_max_steps = max(max_steps, total_expected_steps)
         log("Actor", f"Max steps: {effective_max_steps} (from {len(task.subtasks)} subtasks)")
 
-        # Collect allowed domains and blocked patterns from all plugins
-        allowed_domains: Set[str] = set()
-        blocked_patterns: List[str] = []
-        plugins_used: Dict[str, BasePlugin] = {}
-
-        for subtask in task.subtasks:
-            plugin = self.task_manager.get_plugin(subtask.plugin_name)
-            if plugin:
-                plugins_used[subtask.plugin_name] = plugin
-                if hasattr(plugin, 'allowed_domains'):
-                    allowed_domains.update(plugin.allowed_domains)
-                if hasattr(plugin, 'get_blocked_patterns'):
-                    blocked_patterns.extend(plugin.get_blocked_patterns())
-                elif hasattr(plugin, 'blocked_url_patterns'):
-                    blocked_patterns.extend(plugin.blocked_url_patterns)
-                # Clear dynamic state for plugins supporting external navigation
-                if hasattr(plugin, 'clear_external_urls'):
-                    plugin.clear_external_urls()
-
-        blocked_patterns = list(set(blocked_patterns))
+        plugins_used, allowed_domains, blocked_patterns = self._collect_plugin_info(task)
         if blocked_patterns:
             log("Actor", f"Blocked URL patterns: {blocked_patterns}")
 
@@ -313,34 +386,14 @@ class Actor:
         interceptor = None
         gt_collector = None
 
-        # Create URL validator for plugins supporting external navigation
-        def url_validator(url: str) -> bool:
-            """Check if any plugin allows this URL (for dynamic external navigation)."""
-            for p in plugins_used.values():
-                if hasattr(p, 'is_url_allowed') and p.is_url_allowed(url):
-                    return True
-            return False
-
         try:
             # Create browser session
             session = await self.browser.new_session()
 
             # Set up interceptor
-            interceptor = CacheInterceptor(
-                cached_pages=cached_pages,
-                allowed_domains=allowed_domains,
-                blocked_patterns=blocked_patterns if blocked_patterns else None,
-                cache_manager=self.cache_manager if self.use_cache else None,
-                url_validator=url_validator,
+            interceptor = await self._setup_interceptor(
+                session, cached_pages, allowed_domains, blocked_patterns, plugins_used,
             )
-
-            # Install route handler using session's set_cache_interceptor method
-            if self.use_cache:
-                await session.set_cache_interceptor(interceptor)
-
-            # Block URLs in live mode
-            if not self.use_cache and blocked_patterns:
-                await session.block_urls(blocked_patterns)
 
             llm_client = LLMClient(base_url=base_url, api_key=api_key)
 
@@ -352,95 +405,16 @@ class Actor:
             # Set global reference for hybrid utils
             set_current_gt_collector(gt_collector)
 
-            # Track accessibility trees for real-time GT collection
-            step_accessibility_trees: Dict[str, str] = {}
-
-            # Helper to find plugin for a URL (includes external URL support)
-            def find_plugin_for_url(url: str):
-                """Find the plugin that handles this URL."""
-                # First try domain matching
-                for p in plugins_used.values():
-                    for domain in p.allowed_domains:
-                        if _url_matches_domain(url, domain):
-                            return p
-                # Then check dynamic URL validation (for external navigation)
-                for p in plugins_used.values():
-                    if hasattr(p, 'is_url_allowed') and p.is_url_allowed(url):
-                        return p
-                return None
-
-            # Create navigation callback for caching and GT tracking
+            # Navigation and observation callbacks delegate to shared functions
             async def on_navigation(url: str):
-                # Cache the page on navigation if in cache mode
-                if self.use_cache:
-                    normalized = normalize_url(url)
-                    if normalized not in cached_pages:
-                        # Determine which plugin to use for API data
-                        plugin = find_plugin_for_url(url)
+                await _handle_navigation_event(
+                    interceptor, cached_pages, plugins_used, url, self.use_cache,
+                )
 
-                        if plugin:
-                            # Check if this page needs API data (detail page vs navigation page)
-                            need_api = plugin.needs_api_data(url)
-                            page_req = PageRequirement.data(url) if need_api else PageRequirement.nav(url)
-
-                            # Fetch and cache the page - raise fatal error on failure
-                            # Cache failure = browser can't load page = invalid evaluation
-                            pages = await self.cache_manager.ensure_cached(
-                                [page_req],
-                                plugin,
-                            )
-                            cached_pages.update(pages)
-                            req_type = "data" if need_api else "nav"
-                            log("Actor", f"Cached ({req_type}): {url[:55]}...")
-
-                            # For plugins with external URL support, register external URLs
-                            # from cached api_data (needed when cache HIT bypasses fetch_api_data)
-                            if hasattr(plugin, '_extract_external_urls'):
-                                for cached_page in pages.values():
-                                    if cached_page.api_data:
-                                        plugin._extract_external_urls(cached_page.api_data)
-
-            # Observation callback for real-time GT collection (fires when page is viewed)
             async def on_observation(obs):
-                """Called when agent observes a page (before deciding action)."""
-                if obs and obs.url:
-                    url = obs.url
-                    if url and url != "about:blank":
-                        # Get api_data from cached page (CACHE mode) or fetch live (LIVE mode)
-                        api_data = None
-                        if self.use_cache:
-                            # CACHE mode: use cached api_data
-                            normalized = normalize_url(url)
-                            cached_page = cached_pages.get(normalized)
-                            if cached_page:
-                                api_data = cached_page.api_data
-                        else:
-                            # LIVE mode: fetch api_data from network
-                            # This ensures GT matches what agent sees in real-time
-                            plugin = find_plugin_for_url(url)
-                            if plugin:
-                                need_api = plugin.needs_api_data(url)
-                                if need_api:
-                                    # Data page: API fetch must succeed
-                                    try:
-                                        api_data = await plugin.fetch_api_data(url)
-                                    except Exception as e:
-                                        raise CacheFatalError(
-                                            f"LIVE mode API fetch failed (GT invalid): {e}",
-                                            url=url,
-                                        )
-                                    if not api_data:
-                                        raise CacheFatalError(
-                                            f"LIVE mode API returned empty data (GT invalid)",
-                                            url=url,
-                                        )
-
-                        # Collect GT from this page visit
-                        await gt_collector.on_page_visit(
-                            url,
-                            obs.accessibility_tree,
-                            api_data=api_data,
-                        )
+                await _handle_observation_event(
+                    interceptor, cached_pages, plugins_used, gt_collector, obs, self.use_cache,
+                )
 
             agent_loop = AgentLoop(
                 session=session,
@@ -481,10 +455,22 @@ class Actor:
                 error_message = f"Agent timeout after {timeout}s"
                 log("Actor", error_message, force=True)
             except BrowserFatalError as e:
-                # Browser navigation failure = agent capability issue (e.g., invalid URL)
-                # Valid evaluation with score=0, not a system error
-                failure_reason = "browser_error"
-                log("Actor", f"Browser error (agent issue): {e}", force=True)
+                # Check if the failed URL belongs to a required domain
+                # If so, it's an infrastructure issue (site unreachable), not agent error
+                is_required_domain = False
+                if e.url:
+                    for domain in allowed_domains:
+                        if _url_matches_domain(e.url, domain):
+                            is_required_domain = True
+                            break
+
+                if is_required_domain:
+                    failure_reason = "site_unreachable"
+                    error_message = f"Required site unreachable: {e.url} (after {e.attempts} attempts)"
+                    log("Actor", f"Infrastructure error: {error_message}", force=True)
+                else:
+                    failure_reason = "browser_error"
+                    log("Actor", f"Browser error (agent issue): {e}", force=True)
             except (LLMFatalError, CacheFatalError) as e:
                 failure_reason = _FATAL_ERROR_MAP[type(e)]
                 error_message = f"{failure_reason}: {e}"
@@ -577,7 +563,7 @@ class Actor:
             # Hard failures (system issues) always get 0 — evaluation is invalid
             # Soft failures (max_steps, parse_failed) use computed scores if available
             # browser_error = agent capability issue (not system error), uses computed scores
-            _HARD_FAILURES = {"agent_timeout", "llm_error", "cache_error"}
+            _HARD_FAILURES = {"agent_timeout", "llm_error", "cache_error", "site_unreachable"}
             if failure_reason and failure_reason in _HARD_FAILURES:
                 total_score = 0.0
                 success = False
@@ -764,26 +750,7 @@ class Actor:
         total_expected_steps = sum(st.expected_steps for st in task.subtasks)
         max_steps = max(30, total_expected_steps)
 
-        # Collect allowed domains and blocked patterns from plugins
-        allowed_domains: Set[str] = set()
-        blocked_patterns: List[str] = []
-        plugins_used: Dict[str, BasePlugin] = {}
-
-        for subtask in task.subtasks:
-            plugin = self.task_manager.get_plugin(subtask.plugin_name)
-            if plugin:
-                plugins_used[subtask.plugin_name] = plugin
-                if hasattr(plugin, 'allowed_domains'):
-                    allowed_domains.update(plugin.allowed_domains)
-                if hasattr(plugin, 'get_blocked_patterns'):
-                    blocked_patterns.extend(plugin.get_blocked_patterns())
-                elif hasattr(plugin, 'blocked_url_patterns'):
-                    blocked_patterns.extend(plugin.blocked_url_patterns)
-                # Clear dynamic state for plugins supporting external navigation
-                if hasattr(plugin, 'clear_external_urls'):
-                    plugin.clear_external_urls()
-
-        blocked_patterns = list(set(blocked_patterns))
+        plugins_used, allowed_domains, blocked_patterns = self._collect_plugin_info(task)
 
         # Prepare cached pages storage
         cached_pages: Dict[str, CachedPage] = {}
@@ -794,34 +761,14 @@ class Actor:
         gt_collector = None
         episode_added = False
 
-        # Create URL validator for plugins supporting external navigation
-        def url_validator(url: str) -> bool:
-            """Check if any plugin allows this URL (for dynamic external navigation)."""
-            for p in plugins_used.values():
-                if hasattr(p, 'is_url_allowed') and p.is_url_allowed(url):
-                    return True
-            return False
-
         try:
             # Create browser session
             session = await self.browser.new_session()
 
             # Set up interceptor
-            interceptor = CacheInterceptor(
-                cached_pages=cached_pages,
-                allowed_domains=allowed_domains,
-                blocked_patterns=blocked_patterns if blocked_patterns else None,
-                cache_manager=self.cache_manager if self.use_cache else None,
-                url_validator=url_validator,
+            interceptor = await self._setup_interceptor(
+                session, cached_pages, allowed_domains, blocked_patterns, plugins_used,
             )
-
-            # Install route handler
-            if self.use_cache:
-                await session.set_cache_interceptor(interceptor)
-
-            # Block URLs in live mode
-            if not self.use_cache and blocked_patterns:
-                await session.block_urls(blocked_patterns)
 
             # Initialize GT collector
             gt_collector = GTCollector(
@@ -1023,12 +970,32 @@ class Actor:
             action_result = f"Failed: {e}"
             obs = await episode.session.get_observation()
 
-        # Fire navigation callback if URL changed (for caching)
+        # Fire navigation callback if URL changed (for error propagation + external URLs)
         if obs.url != old_url and obs.url != "about:blank":
-            await self._on_episode_navigation(episode, obs.url)
+            try:
+                await self._on_episode_navigation(episode, obs.url)
+            except CacheFatalError as e:
+                episode.done = True
+                episode.failure_reason = "cache_error"
+                return OpenEnvResponse(
+                    observation=f"Cache error: {e}",
+                    episode_id=episode_id,
+                    done=True,
+                    info=self._build_info(episode, {"type": "cache_error", "message": str(e)}),
+                )
 
         # Fire observation callback for GT collection
-        await self._on_episode_observation(episode, obs)
+        try:
+            await self._on_episode_observation(episode, obs)
+        except CacheFatalError as e:
+            episode.done = True
+            episode.failure_reason = "cache_error"
+            return OpenEnvResponse(
+                observation=f"Cache error: {e}",
+                episode_id=episode_id,
+                done=True,
+                info=self._build_info(episode, {"type": "cache_error", "message": str(e)}),
+            )
 
         # Record trajectory step
         step = TrajectoryStep(
@@ -1233,107 +1200,14 @@ class Actor:
         return info
 
     async def _on_episode_navigation(self, episode: EpisodeState, url: str):
-        """Handle navigation event for caching."""
-        if not self.use_cache:
-            return
-
-        normalized = normalize_url(url)
-        if normalized in episode.cached_pages:
-            return
-
-        # Find plugin for this URL (includes external URL support)
-        plugin = None
-        for p in episode.plugins_used.values():
-            for domain in p.allowed_domains:
-                if _url_matches_domain(url, domain):
-                    plugin = p
-                    break
-            if plugin:
-                break
-        # Check dynamic URL validation (for external navigation)
-        if not plugin:
-            for p in episode.plugins_used.values():
-                if hasattr(p, 'is_url_allowed') and p.is_url_allowed(url):
-                    plugin = p
-                    break
-
-        if not plugin:
-            return
-
-        try:
-            # Check if this page needs API data
-            need_api = plugin.needs_api_data(url)
-            page_req = PageRequirement.data(url) if need_api else PageRequirement.nav(url)
-
-            # Fetch and cache the page
-            pages = await self.cache_manager.ensure_cached([page_req], plugin)
-            episode.cached_pages.update(pages)
-            req_type = "data" if need_api else "nav"
-            log("Actor", f"Cached ({req_type}): {url[:55]}...")
-
-            # For plugins with external URL support, register external URLs
-            # from cached api_data (needed when cache HIT bypasses fetch_api_data)
-            if hasattr(plugin, '_extract_external_urls'):
-                for cached_page in pages.values():
-                    if cached_page.api_data:
-                        plugin._extract_external_urls(cached_page.api_data)
-        except CacheFatalError:
-            raise
-        except Exception as e:
-            log("Actor", f"Navigation cache error: {e}")
+        """Handle navigation event for an episode."""
+        await _handle_navigation_event(
+            episode.interceptor, episode.cached_pages, episode.plugins_used, url, self.use_cache,
+        )
 
     async def _on_episode_observation(self, episode: EpisodeState, obs: BrowserObservation):
         """Handle observation event for GT collection."""
-        if not obs or not obs.url or obs.url == "about:blank":
-            return
-
-        url = obs.url
-        api_data = None
-
-        if self.use_cache:
-            # CACHE mode: use cached api_data
-            normalized = normalize_url(url)
-            cached_page = episode.cached_pages.get(normalized)
-            if cached_page:
-                api_data = cached_page.api_data
-        else:
-            # LIVE mode: fetch api_data from network
-            # Find plugin for this URL (includes external URL support)
-            plugin = None
-            for p in episode.plugins_used.values():
-                for domain in p.allowed_domains:
-                    if _url_matches_domain(url, domain):
-                        plugin = p
-                        break
-                if plugin:
-                    break
-            # Check dynamic URL validation (for external navigation)
-            if not plugin:
-                for p in episode.plugins_used.values():
-                    if hasattr(p, 'is_url_allowed') and p.is_url_allowed(url):
-                        plugin = p
-                        break
-
-            if plugin:
-                need_api = plugin.needs_api_data(url)
-                if need_api:
-                    # Data page: API fetch must succeed
-                    try:
-                        api_data = await plugin.fetch_api_data(url)
-                    except Exception as e:
-                        raise CacheFatalError(
-                            f"LIVE mode API fetch failed (GT invalid): {e}",
-                            url=url,
-                        )
-                    if not api_data:
-                        raise CacheFatalError(
-                            f"LIVE mode API returned empty data (GT invalid)",
-                            url=url,
-                        )
-
-        # Collect GT from this page visit
-        await episode.gt_collector.on_page_visit(
-            url,
-            obs.accessibility_tree,
-            api_data=api_data,
+        await _handle_observation_event(
+            episode.interceptor, episode.cached_pages, episode.plugins_used,
+            episode.gt_collector, obs, self.use_cache,
         )
