@@ -573,6 +573,35 @@ class Actor:
                 total_score = 0.0
                 success = False
 
+            # Compute step-wise rewards from trajectory (post-hoc)
+            reward_calc = StepwiseRewardCalculator(
+                target_assets=set(),
+                required_domains=allowed_domains,
+            )
+            step_rewards = []
+            for step in trajectory:
+                url = step.observation.url
+                r = reward_calc.calculate_step_reward(
+                    url=url,
+                    action_result=step.action_result,
+                    collected_asset_ids=set(),
+                    is_blocked=interceptor._should_block(url) if url != "about:blank" else False,
+                    parse_failed=(step.action is None),
+                )
+                step_rewards.append(r.to_dict())
+
+            truncated = failure_reason == "max_steps_reached"
+            terminal_reward = reward_calc.calculate_terminal_reward(
+                validation_score=total_score,
+                steps_used=len(trajectory),
+                max_steps=effective_max_steps,
+                truncated=truncated,
+            )
+
+            cumulative_step = sum(r["total"] for r in step_rewards)
+            total_reward = cumulative_step + terminal_reward.total
+            log("Actor", f"Rewards: step={cumulative_step:.3f}, terminal={terminal_reward.total:.3f}, total={total_reward:.3f}")
+
             # Get interceptor stats
             interceptor_stats = interceptor.get_stats()
             log("Actor", f"Cache stats: {interceptor_stats['hits']} hits, {interceptor_stats['misses']} misses, "
@@ -602,6 +631,12 @@ class Actor:
                     "conversation": conversation,
                     "failure_reason": failure_reason,
                     "cache_stats": interceptor_stats,
+                },
+                "rewards": {
+                    "step_rewards": step_rewards,
+                    "terminal_reward": terminal_reward.to_dict(),
+                    "cumulative_step_reward": cumulative_step,
+                    "total_reward": total_reward,
                 },
             }
 

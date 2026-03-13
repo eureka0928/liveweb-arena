@@ -377,7 +377,9 @@ class CacheInterceptor:
 
         # 2. Check _url_map (built at init time)
         if normalized in self._url_map:
-            return self._url_map[normalized]
+            page = self._url_map[normalized]
+            if page.is_complete():
+                return page
 
         # 3. Try www variants
         if parsed.netloc.startswith("www."):
@@ -387,7 +389,9 @@ class CacheInterceptor:
                 if page.is_complete():
                     return page
             if no_www in self._url_map:
-                return self._url_map[no_www]
+                page = self._url_map[no_www]
+                if page.is_complete():
+                    return page
         else:
             with_www = normalized.replace("://", "://www.", 1)
             if with_www in self.cached_pages:
@@ -395,7 +399,9 @@ class CacheInterceptor:
                 if page.is_complete():
                     return page
             if with_www in self._url_map:
-                return self._url_map[with_www]
+                page = self._url_map[with_www]
+                if page.is_complete():
+                    return page
 
         # 4. File cache fallback
         if self.cache_manager:

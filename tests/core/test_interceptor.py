@@ -91,15 +91,12 @@ class TestFindCachedPage:
         i = _interceptor()
         assert i._find_cached_page("https://example.com/missing") is None
 
-    def test_incomplete_page_skipped_in_cached_pages(self):
-        """need_api=True 但没有 api_data → cached_pages 步骤跳过，但 _url_map 仍返回。
-        BUG: _url_map 查找不检查 is_complete()，见 audit-findings.md。"""
+    def test_incomplete_page_skipped(self):
+        """need_api=True 但没有 api_data 的页面在所有查找步骤中都被跳过。"""
         url = "https://coingecko.com/en/coins/bitcoin"
         page = CachedPage(url=url, html="<h1>BTC</h1>", api_data=None, fetched_at=1.0, need_api=True)
-        # _url_map 在 __init__ 时构建，不检查 is_complete — 当前行为
         i = _interceptor(cached={normalize_url(url): page})
-        # 步骤1 检查 is_complete → skip，步骤2 _url_map → 返回（不检查 complete）
-        assert i._find_cached_page(url) is page  # 当前行为：返回不完整页面
+        assert i._find_cached_page(url) is None
 
 
 # ── InterceptorStats ───────────────────────────────────────────────
