@@ -23,7 +23,6 @@ from .common import get_collected_data, iter_collected_works, normalize_text, pa
 class ComparisonMetric(Enum):
     """Dynamic metrics suitable for two-book comparisons."""
 
-    EDITION_COUNT = ("edition_count", "number of editions")
     RATINGS_COUNT = ("ratings_count", "number of ratings")
     WANT_TO_READ = ("want_to_read_count", "want-to-read count")
     ALREADY_READ = ("already_read_count", "already-read count")

@@ -8,14 +8,12 @@ RL-friendly template design:
 
 from .book_stats import OpenLibraryBookStatsTemplate
 from .book_comparison import OpenLibraryBookComparisonTemplate
-from .search_ranking import OpenLibrarySearchRankingTemplate
 from .author_editions import OpenLibraryAuthorEditionsTemplate
 from .subject_multi_condition import OpenLibrarySubjectMultiConditionTemplate
 
 __all__ = [
     "OpenLibraryBookStatsTemplate",
     "OpenLibraryBookComparisonTemplate",
-    "OpenLibrarySearchRankingTemplate",
     "OpenLibraryAuthorEditionsTemplate",
     "OpenLibrarySubjectMultiConditionTemplate",
 ]

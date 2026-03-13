@@ -139,7 +139,6 @@ class TaskRegistry:
         80: ("openlibrary", "openlibrary_book_stats"),
         81: ("openlibrary", "openlibrary_subject_multi_condition"),
         82: ("openlibrary", "openlibrary_book_comparison"),
-        83: ("openlibrary", "openlibrary_search_ranking"),
         84: ("openlibrary", "openlibrary_author_editions"),
     }
 
@@ -164,7 +163,7 @@ class TaskRegistry:
         # Version 3: Open Library templates
         [80, 81],
         # Version 4: Additional Open Library templates
-        [82, 83, 84],
+        [82, 84],
     ]
 
     # Combination registry: list of template ID tuples
