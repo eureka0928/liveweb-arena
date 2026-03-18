@@ -413,6 +413,18 @@ class GTCollector:
                 temp = api_data["current_weather"].get("temperature", "?")
                 return f"weather[{loc_key}] {temp}°C"
 
+        elif "arxiv.org" in url_lower:
+            if "papers" in api_data and isinstance(api_data["papers"], dict):
+                # Listing page: store under category key — only first visit wins
+                category = api_data.get("category", "")
+                if category:
+                    store_key = f"arxiv:{category}"
+                    if store_key not in self._collected_api_data:
+                        self._collected_api_data[store_key] = api_data
+                        count = len(api_data["papers"])
+                        return f"+{count} papers (arxiv:{category})"
+                    return f"0 new (already have arxiv:{category})"
+
         elif "openlibrary.org" in url_lower:
             if "works" in api_data and isinstance(api_data["works"], dict):
                 # Search or subject page: store under URL key

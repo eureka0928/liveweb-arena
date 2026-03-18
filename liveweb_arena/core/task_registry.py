@@ -146,6 +146,13 @@ class TaskRegistry:
         86: ("openmeteo", "openmeteo_comparison"),
         87: ("openmeteo", "openmeteo_hourly_extrema"),
         88: ("openmeteo", "openmeteo_forecast_trend"),
+
+        # ArXiv templates
+        90: ("arxiv", "arxiv_paper_info"),
+        91: ("arxiv", "arxiv_author_extrema"),
+        92: ("arxiv", "arxiv_category_comparison"),
+        94: ("arxiv", "arxiv_multi_author_filter"),
+        95: ("arxiv", "arxiv_title_length_extrema"),
     }
 
     # Template versions - each version's combinations come AFTER all previous versions
@@ -172,6 +179,8 @@ class TaskRegistry:
         [82, 84],
         # Version 5: Open Meteo templates
         [85, 86, 87, 88],
+        # Version 6: ArXiv templates
+        [90, 91, 92, 94, 95],
     ]
 
     # Combination registry: list of template ID tuples
