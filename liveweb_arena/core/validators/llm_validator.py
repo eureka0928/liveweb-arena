@@ -150,16 +150,22 @@ class LLMValidator:
             task_specific_rules=rules,
         )
 
-        # Try each validation model in order
+        # Round-robin across models: on failure, immediately try next model.
+        # No backoff — switching model is faster than waiting on a failing one.
+        # Total 20 attempts cycling through all available models.
         validation_models = _get_validation_models(self._llm_client)
+        max_attempts = 20
         last_error = None
-        for model in validation_models:
+
+        for attempt in range(max_attempts):
+            model = validation_models[attempt % len(validation_models)]
             try:
                 response, _ = await self._llm_client.chat(
                     system="You are a precise answer validator. Output only valid JSON.",
                     user=prompt,
                     model=model,
                     temperature=temperature,
+                    max_retries=1,  # single attempt per model, rotate instead
                 )
 
                 result = self._parse_response(response)
@@ -174,12 +180,14 @@ class LLMValidator:
 
             except Exception as e:
                 last_error = e
-                log("Validator", f"Model {model} failed: {e}, trying next")
+                next_model = validation_models[(attempt + 1) % len(validation_models)]
+                log("Validator", f"[{attempt+1}/{max_attempts}] {model} failed: {e}, rotating to {next_model}")
                 continue
 
-        # All models exhausted
+        # All attempts exhausted
         raise RuntimeError(
-            f"All validation models failed. Last error: {last_error}"
+            f"All validation attempts exhausted ({max_attempts} tries across {len(validation_models)} models). "
+            f"Last error: {last_error}"
         ) from last_error
 
     def _parse_response(self, response: str) -> dict:

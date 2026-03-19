@@ -90,6 +90,7 @@ class LLMClient:
         temperature: float = 0.7,
         seed: Optional[int] = None,
         timeout_s: int = None,
+        max_retries: Optional[int] = None,
     ) -> Tuple[str, Optional[dict]]:
         """
         Make a chat completion request.
@@ -101,6 +102,7 @@ class LLMClient:
             temperature: Sampling temperature
             seed: Random seed for reproducibility
             timeout_s: Request timeout in seconds (default: use client default)
+            max_retries: Override retry count (default: class MAX_RETRIES)
 
         Returns:
             Tuple of (response content, usage dict or None)
@@ -115,8 +117,9 @@ class LLMClient:
         messages.append({"role": "user", "content": user})
 
         # Retry loop with exponential backoff
+        retries = max_retries if max_retries is not None else self.MAX_RETRIES
         last_error = None
-        for attempt in range(self.MAX_RETRIES):
+        for attempt in range(retries):
             try:
                 # Wrap in total timeout to prevent runaway requests
                 content, usage = await asyncio.wait_for(
