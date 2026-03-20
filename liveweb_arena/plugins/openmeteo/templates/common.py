@@ -28,13 +28,14 @@ def get_collected_location_data(
     return data, None
 
 
-def get_today_hourly_series(
+def get_today_hourly_pairs(
     data: Dict[str, Any],
     field_name: str,
-) -> Tuple[Optional[List[float]], Optional[GroundTruthResult]]:
-    """Extract today's hourly values for the given field from API data.
+) -> Tuple[Optional[List[Tuple[str, float]]], Optional[GroundTruthResult]]:
+    """Extract today's hourly (time_str, value) pairs for the given field.
 
-    Returns (values, None) on success, or (None, failure_result) on error.
+    Returns a list of (ISO time string, numeric value) tuples for today,
+    or (None, failure_result) on error.
     """
     hourly = data.get("hourly")
     if not hourly:
@@ -70,29 +71,37 @@ def get_today_hourly_series(
     if not today:
         today = str(times[0]).split("T", 1)[0]
 
-    values: List[float] = []
+    pairs: List[Tuple[str, float]] = []
     for time_str, val in zip(times, series):
         if not isinstance(time_str, str) or not time_str.startswith(today):
             continue
         if val is None:
             continue
         try:
-            values.append(float(val))
+            pairs.append((time_str, float(val)))
         except (TypeError, ValueError):
             return None, GroundTruthResult.fail(
                 f"Non-numeric value in hourly {field_name}: {val!r}"
             )
 
-    if not values:
+    if not pairs:
         return None, GroundTruthResult.fail(
             f"No hourly {field_name} data found for today ({today})"
         )
 
-    return values, None
+    return pairs, None
 
 
-def get_today_hourly_temperatures(
+def get_today_hourly_series(
     data: Dict[str, Any],
+    field_name: str,
 ) -> Tuple[Optional[List[float]], Optional[GroundTruthResult]]:
-    """Extract today's hourly temperatures from a collected API payload."""
-    return get_today_hourly_series(data, "temperature_2m")
+    """Extract today's hourly values for the given field from API data.
+
+    Thin wrapper around get_today_hourly_pairs that discards the timestamps.
+    Returns (values, None) on success, or (None, failure_result) on error.
+    """
+    pairs, failure = get_today_hourly_pairs(data, field_name)
+    if failure is not None:
+        return None, failure
+    return [val for _, val in pairs], None

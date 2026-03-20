@@ -287,3 +287,14 @@ class DailyMetric(Enum):
     @property
     def unit(self) -> str:
         return self.value[2]
+
+
+# Thresholds for hourly_threshold template, keyed by HourlyMetric.api_field.
+# Each list covers the practical range for the metric so that most cities
+# will have a non-trivial count (neither 0 nor 24).
+HOURLY_THRESHOLDS: Dict[str, List[float]] = {
+    "temperature_2m": [-10.0, -5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0],
+    "relative_humidity_2m": [30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0],
+    "wind_speed_10m": [5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 40.0],
+    "precipitation_probability": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0],
+}
