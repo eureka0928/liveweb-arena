@@ -147,6 +147,7 @@ class TaskRegistry:
         87: ("openmeteo", "openmeteo_hourly_extrema"),
         88: ("openmeteo", "openmeteo_forecast_trend"),
         96: ("openmeteo", "openmeteo_hourly_threshold"),
+        97: ("openmeteo", "openmeteo_sunrise_sunset"),
 
         # ArXiv templates
         90: ("arxiv", "arxiv_paper_info"),
@@ -183,7 +184,7 @@ class TaskRegistry:
         # Version 6: ArXiv templates
         [90, 91, 92, 94, 95],
         # Version 7: Additional Open Meteo templates
-        [96],
+        [96, 97],
     ]
 
     # Combination registry: list of template ID tuples

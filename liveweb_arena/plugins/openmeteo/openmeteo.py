@@ -122,14 +122,22 @@ class OpenMeteoPlugin(BasePlugin):
             t_max = daily.get("temperature_2m_max", [])
             t_min = daily.get("temperature_2m_min", [])
             p_max = daily.get("precipitation_probability_max", [])
+            sr = daily.get("sunrise", [])
+            ss = daily.get("sunset", [])
             for i, t in enumerate(times):
                 mx = t_max[i] if i < len(t_max) else "N/A"
                 mn = t_min[i] if i < len(t_min) else "N/A"
                 pp = p_max[i] if i < len(p_max) else "N/A"
-                rows.append(f"<tr><td>{t}</td><td>{mx} C</td><td>{mn} C</td><td>{pp}%</td></tr>")
+                sunrise = sr[i] if i < len(sr) else "N/A"
+                sunset = ss[i] if i < len(ss) else "N/A"
+                rows.append(
+                    f"<tr><td>{t}</td><td>{mx} C</td><td>{mn} C</td>"
+                    f"<td>{pp}%</td><td>{sunrise}</td><td>{sunset}</td></tr>"
+                )
             parts.append(
                 "<h2>Daily Forecast</h2><table>"
-                "<tr><th>Date</th><th>Max Temp</th><th>Min Temp</th><th>Precip Prob</th></tr>"
+                "<tr><th>Date</th><th>Max Temp</th><th>Min Temp</th>"
+                "<th>Precip Prob</th><th>Sunrise</th><th>Sunset</th></tr>"
                 + "".join(rows) + "</table>"
             )
 
