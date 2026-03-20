@@ -16,6 +16,9 @@ from liveweb_arena.plugins.openmeteo.templates.comparison import OpenMeteoCompar
 from liveweb_arena.plugins.openmeteo.templates.current_weather import OpenMeteoCurrentWeatherTemplate
 from liveweb_arena.plugins.openmeteo.templates.forecast_trend import OpenMeteoForecastTrendTemplate
 from liveweb_arena.plugins.openmeteo.templates.hourly_extrema import OpenMeteoHourlyExtremaTemplate
+from liveweb_arena.plugins.openmeteo.templates.hourly_threshold import OpenMeteoHourlyThresholdTemplate
+from liveweb_arena.plugins.openmeteo.templates.sunrise_sunset import OpenMeteoSunriseSunsetTemplate
+from liveweb_arena.plugins.openmeteo.templates.hourly_time_of import OpenMeteoHourlyTimeOfTemplate
 from liveweb_arena.plugins.openmeteo.templates.variables import CITIES
 
 
@@ -43,6 +46,9 @@ def test_plugin_and_templates_registered():
         "openmeteo_comparison",
         "openmeteo_hourly_extrema",
         "openmeteo_forecast_trend",
+        "openmeteo_hourly_threshold",
+        "openmeteo_sunrise_sunset",
+        "openmeteo_hourly_time_of",
     ]:
         assert name in templates
 
@@ -73,6 +79,9 @@ def test_coordinate_extraction_and_cache_keys():
         (OpenMeteoCurrentWeatherTemplate, {"city_name", "coord_key", "metric_field", "unit"}),
         (OpenMeteoHourlyExtremaTemplate, {"city_name", "coord_key", "is_max"}),
         (OpenMeteoForecastTrendTemplate, {"city_name", "coord_key"}),
+        (OpenMeteoHourlyThresholdTemplate, {"city_name", "coord_key", "threshold", "is_above"}),
+        (OpenMeteoSunriseSunsetTemplate, {"city_name", "coord_key", "day_idx", "is_sunrise"}),
+        (OpenMeteoHourlyTimeOfTemplate, {"city_name", "coord_key", "is_max"}),
     ],
 )
 def test_interaction_first_templates_start_from_generic_docs(template_cls, expected_fields):
@@ -232,12 +241,16 @@ def test_registry_contains_openmeteo_templates():
         86: ("openmeteo", "openmeteo_comparison"),
         87: ("openmeteo", "openmeteo_hourly_extrema"),
         88: ("openmeteo", "openmeteo_forecast_trend"),
+        96: ("openmeteo", "openmeteo_hourly_threshold"),
+        97: ("openmeteo", "openmeteo_sunrise_sunset"),
+        98: ("openmeteo", "openmeteo_hourly_time_of"),
     }
     for template_id, template_info in expected.items():
         assert TaskRegistry.TEMPLATES[template_id] == template_info
 
     TaskRegistry._ensure_initialized()
     assert (85,) in TaskRegistry._combinations
+    assert (96,) in TaskRegistry._combinations
 
 
 def test_city_docs_urls_are_unique_and_parseable():
@@ -258,3 +271,229 @@ def test_openmeteo_templates_expose_page_only_gt_source():
     assert OpenMeteoComparisonTemplate().get_gt_source() == GTSourceType.PAGE_ONLY
     assert OpenMeteoHourlyExtremaTemplate().get_gt_source() == GTSourceType.PAGE_ONLY
     assert OpenMeteoForecastTrendTemplate().get_gt_source() == GTSourceType.PAGE_ONLY
+    assert OpenMeteoHourlyThresholdTemplate().get_gt_source() == GTSourceType.PAGE_ONLY
+    assert OpenMeteoSunriseSunsetTemplate().get_gt_source() == GTSourceType.PAGE_ONLY
+    assert OpenMeteoHourlyTimeOfTemplate().get_gt_source() == GTSourceType.PAGE_ONLY
+
+
+def test_hourly_threshold_counts_correctly(collector):
+    collector._merge_api_data(
+        "https://open-meteo.com/en/docs?latitude=35.68&longitude=139.65",
+        {
+            "_location_key": "35.68,139.65",
+            "current_weather": {"temperature": 12.5, "time": "2026-03-17T09:00"},
+            "daily": {"time": ["2026-03-17"]},
+            "hourly": {
+                "time": [
+                    "2026-03-17T00:00",
+                    "2026-03-17T06:00",
+                    "2026-03-17T12:00",
+                    "2026-03-17T18:00",
+                ],
+                "temperature_2m": [5.0, 10.0, 20.0, 15.0],
+            },
+        },
+    )
+
+    tmpl = OpenMeteoHourlyThresholdTemplate()
+
+    # Above 10: 20.0, 15.0 → 2
+    result_above = run_async(
+        tmpl.get_ground_truth({
+            "city_name": "Tokyo", "coord_key": "35.68,139.65",
+            "metric_field": "temperature_2m", "threshold": 10.0, "is_above": True,
+        })
+    )
+    assert result_above.success is True
+    assert result_above.value == "2"
+
+    # Below 10: 5.0 → 1
+    result_below = run_async(
+        tmpl.get_ground_truth({
+            "city_name": "Tokyo", "coord_key": "35.68,139.65",
+            "metric_field": "temperature_2m", "threshold": 10.0, "is_above": False,
+        })
+    )
+    assert result_below.success is True
+    assert result_below.value == "1"
+
+
+def test_hourly_threshold_uses_jittered_thresholds():
+    """Verify that different seeds produce different (non-round) thresholds."""
+    tmpl = OpenMeteoHourlyThresholdTemplate()
+    thresholds = set()
+    for seed in range(50):
+        q = tmpl.generate(seed)
+        thresholds.add(q.validation_info["threshold"])
+    # With jitter, we should get many distinct values (not just the base list)
+    assert len(thresholds) > 20
+
+
+def test_sunrise_sunset_returns_exact_time(collector):
+    collector._merge_api_data(
+        "https://open-meteo.com/en/docs?latitude=35.68&longitude=139.65",
+        {
+            "_location_key": "35.68,139.65",
+            "current_weather": {"temperature": 12.5, "time": "2026-03-17T09:00"},
+            "daily": {
+                "time": ["2026-03-17", "2026-03-18", "2026-03-19"],
+                "sunrise": ["2026-03-17T06:03", "2026-03-18T06:01", "2026-03-19T05:59"],
+                "sunset": ["2026-03-17T18:05", "2026-03-18T18:06", "2026-03-19T18:07"],
+            },
+        },
+    )
+
+    tmpl = OpenMeteoSunriseSunsetTemplate()
+
+    # Sunrise day 0 → "06:03"
+    result = run_async(
+        tmpl.get_ground_truth({
+            "city_name": "Tokyo", "coord_key": "35.68,139.65",
+            "day_idx": 0, "day_label": "today", "is_sunrise": True,
+        })
+    )
+    assert result.success is True
+    assert result.value == "06:03"
+
+    # Sunset day 1 → "18:06"
+    result_ss = run_async(
+        tmpl.get_ground_truth({
+            "city_name": "Tokyo", "coord_key": "35.68,139.65",
+            "day_idx": 1, "day_label": "tomorrow", "is_sunrise": False,
+        })
+    )
+    assert result_ss.success is True
+    assert result_ss.value == "18:06"
+
+
+def test_sunrise_sunset_truncates_seconds(collector):
+    """If the API ever returns seconds (e.g. T06:23:45), GT should still be HH:MM."""
+    collector._merge_api_data(
+        "https://open-meteo.com/en/docs?latitude=35.68&longitude=139.65",
+        {
+            "_location_key": "35.68,139.65",
+            "current_weather": {"temperature": 12.5, "time": "2026-03-17T09:00"},
+            "daily": {
+                "time": ["2026-03-17"],
+                "sunrise": ["2026-03-17T06:23:45"],
+                "sunset": ["2026-03-17T18:05:12"],
+            },
+        },
+    )
+
+    tmpl = OpenMeteoSunriseSunsetTemplate()
+    result = run_async(
+        tmpl.get_ground_truth({
+            "city_name": "Tokyo", "coord_key": "35.68,139.65",
+            "day_idx": 0, "day_label": "today", "is_sunrise": True,
+        })
+    )
+    assert result.success is True
+    assert result.value == "06:23"
+
+
+def test_sunrise_sunset_handles_null_polar(collector):
+    collector._merge_api_data(
+        "https://open-meteo.com/en/docs?latitude=68.97&longitude=33.09",
+        {
+            "_location_key": "68.97,33.09",
+            "current_weather": {"temperature": -5.0, "time": "2026-06-21T12:00"},
+            "daily": {
+                "time": ["2026-06-21"],
+                "sunrise": [None],
+                "sunset": [None],
+            },
+        },
+    )
+
+    result = run_async(
+        OpenMeteoSunriseSunsetTemplate().get_ground_truth({
+            "city_name": "Murmansk", "coord_key": "68.97,33.09",
+            "day_idx": 0, "day_label": "today", "is_sunrise": True,
+        })
+    )
+    assert result.success is False
+
+
+def test_hourly_time_of_finds_extremum_time(collector):
+    collector._merge_api_data(
+        "https://open-meteo.com/en/docs?latitude=35.68&longitude=139.65",
+        {
+            "_location_key": "35.68,139.65",
+            "current_weather": {"temperature": 12.5, "time": "2026-03-17T09:00"},
+            "daily": {"time": ["2026-03-17"]},
+            "hourly": {
+                "time": [
+                    "2026-03-17T00:00",
+                    "2026-03-17T06:00",
+                    "2026-03-17T12:00",
+                    "2026-03-17T14:00",
+                    "2026-03-17T18:00",
+                ],
+                "wind_speed_10m": [5.0, 12.0, 8.0, 12.0, 3.0],
+            },
+        },
+    )
+
+    tmpl = OpenMeteoHourlyTimeOfTemplate()
+
+    # Max wind = 12.0 at 06:00 (first occurrence wins over 14:00)
+    max_result = run_async(
+        tmpl.get_ground_truth({
+            "city_name": "Tokyo", "coord_key": "35.68,139.65",
+            "is_max": True, "metric_field": "wind_speed_10m",
+        })
+    )
+    assert max_result.success is True
+    assert max_result.value == "06:00"
+
+    # Min wind = 3.0 at 18:00
+    min_result = run_async(
+        tmpl.get_ground_truth({
+            "city_name": "Tokyo", "coord_key": "35.68,139.65",
+            "is_max": False, "metric_field": "wind_speed_10m",
+        })
+    )
+    assert min_result.success is True
+    assert min_result.value == "18:00"
+
+
+def test_hourly_time_of_excludes_temperature():
+    """Template 98 must not generate temperature questions (diurnal cycle is a fixed pattern)."""
+    tmpl = OpenMeteoHourlyTimeOfTemplate()
+    for seed in range(100):
+        q = tmpl.generate(seed)
+        assert q.validation_info["metric_field"] != "temperature_2m", (
+            f"seed {seed} generated temperature question — should be excluded"
+        )
+
+
+def test_hourly_threshold_requires_city_visit():
+    result = run_async(
+        OpenMeteoHourlyThresholdTemplate().get_ground_truth({
+            "city_name": "Tokyo", "coord_key": "35.68,139.65",
+            "metric_field": "temperature_2m", "threshold": 20.0, "is_above": True,
+        })
+    )
+    assert result.success is False
+    assert result.is_data_not_collected()
+
+
+def test_build_data_html_includes_sunrise_sunset():
+    plugin = OpenMeteoPlugin()
+    html = plugin._build_data_html({
+        "current_weather": {"temperature": 12.5, "windspeed": 5.0, "winddirection": 180},
+        "daily": {
+            "time": ["2026-03-17"],
+            "temperature_2m_max": [16.0],
+            "temperature_2m_min": [9.0],
+            "precipitation_probability_max": [30],
+            "sunrise": ["2026-03-17T06:00"],
+            "sunset": ["2026-03-17T18:05"],
+        },
+        "hourly": {"time": [], "temperature_2m": []},
+    })
+    assert "Sunrise" in html
+    assert "Sunset" in html
+    assert "2026-03-17T06:00" in html
+    assert "2026-03-17T18:05" in html
