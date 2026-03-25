@@ -377,75 +377,91 @@ class CacheManager:
 
             start = time.time()
 
-            if need_api:
-                # Fetch HTML and API data concurrently
-                page_task = asyncio.ensure_future(self._fetch_page(url, plugin))
-                api_task = asyncio.ensure_future(plugin.fetch_api_data(url))
+            try:
+                if need_api:
+                    # Fetch HTML and API data concurrently
+                    page_task = asyncio.ensure_future(self._fetch_page(url, plugin))
+                    api_task = asyncio.ensure_future(plugin.fetch_api_data(url))
 
-                # Wait for both, collecting errors
-                page_result = None
-                page_error = None
-                api_data = None
-                api_error = None
+                    # Wait for both, collecting errors
+                    page_result = None
+                    page_error = None
+                    api_data = None
+                    api_error = None
 
-                try:
-                    page_result = await page_task
-                except Exception as e:
-                    page_error = e
-                    # Cancel API task if page fails — no point caching without HTML
-                    api_task.cancel()
-
-                if page_error is None:
                     try:
-                        api_data = await api_task
+                        page_result = await page_task
                     except Exception as e:
-                        api_error = e
+                        page_error = e
+                        api_task.cancel()
 
-                if page_error is not None:
-                    raise CacheFatalError(
-                        f"Page fetch failed (browser cannot load): {page_error}",
-                        url=url,
-                    )
-                html, accessibility_tree = page_result
+                    if page_error is None:
+                        try:
+                            api_data = await api_task
+                        except Exception as e:
+                            api_error = e
 
-                if api_error is not None:
-                    raise CacheFatalError(
-                        f"API data fetch failed (GT will be invalid): {api_error}",
-                        url=url,
-                    )
-                if not api_data:
-                    raise CacheFatalError(
-                        f"API data is empty (GT will be invalid)",
-                        url=url,
-                    )
-            else:
-                try:
-                    html, accessibility_tree = await self._fetch_page(url, plugin)
-                except Exception as e:
-                    raise CacheFatalError(
-                        f"Page fetch failed (browser cannot load): {e}",
-                        url=url,
-                    )
-                api_data = None
+                    if page_error is not None:
+                        raise CacheFatalError(
+                            f"Page fetch failed (browser cannot load): {page_error}",
+                            url=url,
+                        )
+                    html, accessibility_tree = page_result
 
-            cached = CachedPage(
-                url=url,
-                html=html,
-                api_data=api_data,
-                fetched_at=time.time(),
-                accessibility_tree=accessibility_tree,
-                need_api=need_api,
-            )
+                    if api_error is not None:
+                        raise CacheFatalError(
+                            f"API data fetch failed (GT will be invalid): {api_error}",
+                            url=url,
+                        )
+                    if not api_data:
+                        raise CacheFatalError(
+                            f"API data is empty (GT will be invalid)",
+                            url=url,
+                        )
+                else:
+                    try:
+                        html, accessibility_tree = await self._fetch_page(url, plugin)
+                    except Exception as e:
+                        raise CacheFatalError(
+                            f"Page fetch failed (browser cannot load): {e}",
+                            url=url,
+                        )
+                    api_data = None
 
-            self._save(cache_file, cached)
-            elapsed = time.time() - start
-            log("Cache", f"SAVED {page_type} - {url_display(normalized)} ({elapsed:.1f}s)")
-            return cached
+                cached = CachedPage(
+                    url=url,
+                    html=html,
+                    api_data=api_data,
+                    fetched_at=time.time(),
+                    accessibility_tree=accessibility_tree,
+                    need_api=need_api,
+                )
+
+                self._save(cache_file, cached)
+                elapsed = time.time() - start
+                log("Cache", f"SAVED {page_type} - {url_display(normalized)} ({elapsed:.1f}s)")
+                return cached
+
+            except CacheFatalError:
+                # Refresh failed — try stale cache as fallback
+                stale = self._load_stale(cache_file, need_api)
+                if stale:
+                    log("Cache", f"STALE {page_type} (refresh failed, using expired) - {url_display(normalized)}")
+                    return stale
+                raise  # No stale data available, propagate the error
         finally:
             async_file_lock_release(lock_fd)
 
     def _load_if_valid(self, cache_file: Path, need_api: bool) -> Optional[CachedPage]:
-        """Load cache if valid."""
+        """Load cache if valid (not expired and complete)."""
+        return self._load_cache(cache_file, need_api, allow_stale=False)
+
+    def _load_stale(self, cache_file: Path, need_api: bool) -> Optional[CachedPage]:
+        """Load cache even if expired (fallback when refresh fails)."""
+        return self._load_cache(cache_file, need_api, allow_stale=True)
+
+    def _load_cache(self, cache_file: Path, need_api: bool, allow_stale: bool) -> Optional[CachedPage]:
+        """Load cache with optional staleness tolerance."""
         if not cache_file.exists():
             return None
 
@@ -453,21 +469,21 @@ class CacheManager:
             cached = self._load(cache_file)
         except Exception as e:
             logger.warning(f"Failed to load cache {cache_file}: {e}")
-            # Corrupted cache - delete it
             self._delete_cache(cache_file)
             return None
 
-        if cached.is_expired(self.ttl):
-            # Expired cache - delete it
-            self._delete_cache(cache_file)
+        if not allow_stale and cached.is_expired(self.ttl):
             return None
 
-        # Check if cache is complete based on its own need_api flag
-        # Also handle case where current request needs API but old cache doesn't have it
+        # Check if cache is complete
         if not cached.is_complete() or (need_api and not cached.api_data):
-            log("Cache", f"Incomplete (missing API) - deleting {url_display(cached.url)}")
-            self._delete_cache(cache_file)
-            return None
+            if not allow_stale:
+                return None
+            # Stale mode: still require api_data when need_api (GT depends on it)
+            if need_api and not cached.api_data:
+                return None
+            if not cached.html:
+                return None
 
         return cached
 
