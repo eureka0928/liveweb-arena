@@ -241,16 +241,16 @@ def test_registry_contains_openmeteo_templates():
         86: ("openmeteo", "openmeteo_comparison"),
         87: ("openmeteo", "openmeteo_hourly_extrema"),
         88: ("openmeteo", "openmeteo_forecast_trend"),
-        96: ("openmeteo", "openmeteo_hourly_threshold"),
-        97: ("openmeteo", "openmeteo_sunrise_sunset"),
-        98: ("openmeteo", "openmeteo_hourly_time_of"),
+        99: ("openmeteo", "openmeteo_hourly_threshold"),
+        100: ("openmeteo", "openmeteo_sunrise_sunset"),
+        101: ("openmeteo", "openmeteo_hourly_time_of"),
     }
     for template_id, template_info in expected.items():
         assert TaskRegistry.TEMPLATES[template_id] == template_info
 
     TaskRegistry._ensure_initialized()
     assert (85,) in TaskRegistry._combinations
-    assert (96,) in TaskRegistry._combinations
+    assert (99,) in TaskRegistry._combinations
 
 
 def test_city_docs_urls_are_unique_and_parseable():
@@ -459,7 +459,7 @@ def test_hourly_time_of_finds_extremum_time(collector):
 
 
 def test_hourly_time_of_excludes_temperature():
-    """Template 98 must not generate temperature questions (diurnal cycle is a fixed pattern)."""
+    """Template 101 must not generate temperature questions (diurnal cycle is a fixed pattern)."""
     tmpl = OpenMeteoHourlyTimeOfTemplate()
     for seed in range(100):
         q = tmpl.generate(seed)
