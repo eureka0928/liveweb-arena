@@ -184,7 +184,7 @@ class TaskRegistry:
         [85, 86, 87, 88],
         # Version 6: ArXiv templates
         [90, 91, 92, 94, 95],
-        # Version 7: Additional Open Meteo templates
+        # Version 8: Additional Open Meteo templates
         [99, 100, 101],
     ]
 
