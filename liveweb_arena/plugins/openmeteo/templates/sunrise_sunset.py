@@ -1,21 +1,24 @@
-"""Sunrise/sunset time template for Open Meteo - MEDIUM DIFFICULTY.
+"""Daylight duration template for Open Meteo - MEDIUM DIFFICULTY.
 
-Asks for the exact sunrise or sunset time in a city on a given day.
+Asks how long the daylight period is in a city on a given day.
 The agent starts on the generic docs page, finds the city, then reads
-the sunrise or sunset time from the daily forecast table.
+BOTH sunrise AND sunset from the daily forecast table and computes the
+duration (sunset - sunrise).
 
-Dynamic data: sunrise/sunset times shift by ~1-4 minutes daily.
-Computation required: agent must locate and read the specific time.
+Dynamic data: sunrise/sunset shift by ~1-4 minutes daily.
+Computation required: read two time values and compute the difference.
+Multi-value: requires both sunrise AND sunset — not a single-value read.
 
 SFT defense:
-- Answer is an exact HH:MM value (~1440 possible values, random baseline ~0%).
-- An LLM can estimate sunrise/sunset from latitude + date to ±15-30 min,
-  but rarely within the ±2 min required for full score.
-- The 0.5 tier (±10 min) is tight enough that climatological estimates
-  fail for most of the 170-city pool (especially non-capital, high-latitude,
-  and Southern-Hemisphere cities where LLM training data is sparse).
+- Answer is in "Xh Ym" format with minute-level precision.
+- Scoring is tight: ±3 min for 1.0, ±10 min for 0.5.
+- An LLM can estimate daylight ≈ f(latitude, date) to ±15-30 min, but
+  rarely within ±3 min. The API uses its own atmospheric refraction model,
+  so exact minute differs from astronomical tables.
+- Near equinoxes (~12h), SFT's "12h 0m" guess is off by 5-20 min for
+  most cities (exact duration depends on latitude + refraction).
 
-Effective variants: 170 cities x 2 (sunrise/sunset) x 3 days = 1,020 (>500).
+Effective variants: 170 cities x 3 days x 3 patterns = 1,530 (>500).
 """
 
 import random
@@ -39,28 +42,27 @@ DAY_OPTIONS = [
     (2, "the day after tomorrow"),
 ]
 
-PATTERNS_SUNRISE = [
-    "According to Open-Meteo, at what time is sunrise in {city} {day_label}?",
-    "Using Open-Meteo, find the exact sunrise time for {city} {day_label}.",
-    "On Open-Meteo, what time does the sun rise in {city} {day_label}?",
-]
-
-PATTERNS_SUNSET = [
-    "According to Open-Meteo, at what time is sunset in {city} {day_label}?",
-    "Using Open-Meteo, find the exact sunset time for {city} {day_label}.",
-    "On Open-Meteo, what time does the sun set in {city} {day_label}?",
+PATTERNS = [
+    "According to Open-Meteo, how long is the daylight period in {city} {day_label}? Answer in hours and minutes.",
+    "Using Open-Meteo, what is the duration from sunrise to sunset in {city} {day_label}?",
+    "On Open-Meteo, how many hours and minutes of daylight does {city} get {day_label}?",
 ]
 
 
 @register_template("openmeteo_sunrise_sunset")
 class OpenMeteoSunriseSunsetTemplate(QuestionTemplate):
     """
-    MEDIUM: Read the exact sunrise or sunset time from the daily forecast.
+    MEDIUM: Compute daylight duration from sunrise and sunset times.
 
-    Requires navigating to the city page and reading a specific time value.
-    Large answer space (HH:MM) prevents SFT from achieving high scores via
-    world-knowledge estimation.
-    170 cities x 2 (sunrise/sunset) x 3 days = 1,020 effective variants.
+    Requires reading TWO values (sunrise + sunset) from the daily forecast
+    table and computing the time difference. This is multi-step computation,
+    not a single-value read — satisfying §4 gate 1 (non-trivial) and
+    gate 3 (computation required).
+
+    Tight scoring (±3 min for 1.0) prevents SFT from exploiting the
+    latitude→daylight approximation.
+
+    170 cities x 3 days x 3 patterns = 1,530 effective variants.
     """
 
     GT_SOURCE = GTSourceType.PAGE_ONLY
@@ -73,10 +75,9 @@ class OpenMeteoSunriseSunsetTemplate(QuestionTemplate):
 
         city = rng.choice(CITIES)
         day_idx, day_label = rng.choice(DAY_OPTIONS)
-        is_sunrise = rng.choice([True, False])
+        pattern = rng.choice(PATTERNS)
 
-        patterns = PATTERNS_SUNRISE if is_sunrise else PATTERNS_SUNSET
-        question_text = rng.choice(patterns).format(
+        question_text = pattern.format(
             city=city.display_name,
             day_label=day_label,
         )
@@ -84,13 +85,12 @@ class OpenMeteoSunriseSunsetTemplate(QuestionTemplate):
         return GeneratedQuestion(
             question_text=question_text,
             start_url=DOCS_HOME_URL,
-            variables={"city": city.name, "day_idx": day_idx, "is_sunrise": is_sunrise},
+            variables={"city": city.name, "day_idx": day_idx},
             validation_info={
                 "city_name": city.name,
                 "coord_key": city.coord_key,
                 "day_idx": day_idx,
                 "day_label": day_label,
-                "is_sunrise": is_sunrise,
             },
             template_name=self.name,
             expected_steps=7,
@@ -99,22 +99,20 @@ class OpenMeteoSunriseSunsetTemplate(QuestionTemplate):
     def get_validation_rules(self, validation_info: Dict[str, Any]) -> str:
         city = validation_info.get("city_name", "")
         day_label = validation_info.get("day_label", "today")
-        is_sunrise = validation_info.get("is_sunrise", True)
-        event = "sunrise" if is_sunrise else "sunset"
-        return f"""Task-Specific Rules (Open Meteo Sunrise/Sunset Time):
+        return f"""Task-Specific Rules (Open Meteo Daylight Duration):
 - City: {city}
-- Looking for: exact {event} time {day_label}
-- Answer should be a time in HH:MM format (e.g. "06:23", "18:45")
-- Score 1.0: Within ±2 minutes of the correct time
+- Day: {day_label}
+- Read both sunrise and sunset times, compute the difference
+- Answer should be in hours and minutes (e.g. "12h 18m", "12 hours 18 minutes")
+- Score 1.0: Within ±3 minutes of correct duration
 - Score 0.5: Within ±10 minutes
-- Score 0.0: Off by more than 10 minutes or no time given
-- Use the daily forecast table on Open-Meteo (not a general estimate)"""
+- Score 0.0: Off by more than 10 minutes or no answer
+- Use the daily forecast table on Open-Meteo"""
 
     async def get_ground_truth(self, validation_info: Dict[str, Any]) -> GroundTruthResult:
         coord_key = validation_info.get("coord_key", "")
         city_name = validation_info.get("city_name", "")
         day_idx = validation_info.get("day_idx", 0)
-        is_sunrise = validation_info.get("is_sunrise", True)
 
         data, failure = get_collected_location_data(coord_key, city_name)
         if failure is not None:
@@ -124,41 +122,52 @@ class OpenMeteoSunriseSunsetTemplate(QuestionTemplate):
         if not daily:
             return GroundTruthResult.fail("No daily data in API response")
 
-        field = "sunrise" if is_sunrise else "sunset"
-        values = daily.get(field)
-        if not values:
-            return GroundTruthResult.fail(f"No {field} data in daily forecast")
+        sunrise_list = daily.get("sunrise")
+        sunset_list = daily.get("sunset")
+        if not sunrise_list or not sunset_list:
+            return GroundTruthResult.fail("No sunrise/sunset data in daily forecast")
 
-        if len(values) <= day_idx:
+        if len(sunrise_list) <= day_idx or len(sunset_list) <= day_idx:
             return GroundTruthResult.fail(
-                f"Need at least {day_idx + 1} days of {field} data"
+                f"Need at least {day_idx + 1} days of sunrise/sunset data"
             )
 
-        raw = values[day_idx]
+        sunrise_str = sunrise_list[day_idx]
+        sunset_str = sunset_list[day_idx]
 
         # Polar regions may have null sunrise/sunset
-        if not raw:
+        if not sunrise_str or not sunset_str:
             return GroundTruthResult.fail(
-                f"{field.title()} is null for {city_name} on day {day_idx} "
+                f"Sunrise or sunset is null for {city_name} on day {day_idx} "
                 "(possible polar day/night)"
             )
 
-        # Parse ISO timestamp: "2026-03-20T06:23" → "06:23"
-        raw_str = str(raw)
-        if "T" in raw_str:
-            time_part = raw_str.split("T", 1)[1]
-        else:
-            time_part = raw_str
+        # Parse ISO timestamps: "2026-03-20T06:15" format
+        try:
+            sr_parts = str(sunrise_str).split("T", 1)
+            ss_parts = str(sunset_str).split("T", 1)
+            sr_time = sr_parts[1] if len(sr_parts) == 2 else sr_parts[0]
+            ss_time = ss_parts[1] if len(ss_parts) == 2 else ss_parts[0]
 
-        # Validate it looks like a time and truncate to HH:MM
-        parts = time_part.split(":")
-        if len(parts) < 2:
+            sr_h, sr_m = int(sr_time.split(":")[0]), int(sr_time.split(":")[1])
+            ss_h, ss_m = int(ss_time.split(":")[0]), int(ss_time.split(":")[1])
+        except (ValueError, IndexError) as e:
             return GroundTruthResult.fail(
-                f"Cannot parse time from {field} value: {raw!r}"
+                f"Failed to parse sunrise/sunset times: {sunrise_str}, {sunset_str}: {e}"
             )
-        time_hhmm = f"{parts[0]}:{parts[1]}"
 
-        return GroundTruthResult.ok(time_hhmm)
+        total_sr = sr_h * 60 + sr_m
+        total_ss = ss_h * 60 + ss_m
+        duration_min = total_ss - total_sr
+
+        if duration_min < 0:
+            return GroundTruthResult.fail(
+                f"Sunset before sunrise: {sunrise_str} / {sunset_str}"
+            )
+
+        hours = duration_min // 60
+        minutes = duration_min % 60
+        return GroundTruthResult.ok(f"{hours}h {minutes}m")
 
     async def validate_answer(
         self, answer: str, validation_info: Dict[str, Any]

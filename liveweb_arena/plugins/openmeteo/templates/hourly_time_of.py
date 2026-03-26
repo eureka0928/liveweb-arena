@@ -153,6 +153,15 @@ class OpenMeteoHourlyTimeOfTemplate(QuestionTemplate):
         if pair_failure is not None:
             return pair_failure
 
+        # Degenerate case: all values identical (e.g., precip=0 for arid cities).
+        # argmax/argmin would always return 00:00, which SFT can memorize.
+        values = [v for _, v in pairs]
+        if len(set(values)) == 1:
+            return GroundTruthResult.fail(
+                f"All {len(values)} hourly {metric_field} values are identical "
+                f"({values[0]}) — degenerate case, no meaningful extremum"
+            )
+
         # Find argmax/argmin — first occurrence wins ties
         if is_max:
             best_time, best_val = pairs[0]

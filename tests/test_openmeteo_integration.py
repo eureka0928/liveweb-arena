@@ -80,7 +80,7 @@ def test_coordinate_extraction_and_cache_keys():
         (OpenMeteoHourlyExtremaTemplate, {"city_name", "coord_key", "is_max"}),
         (OpenMeteoForecastTrendTemplate, {"city_name", "coord_key"}),
         (OpenMeteoHourlyThresholdTemplate, {"city_name", "coord_key", "threshold", "is_above"}),
-        (OpenMeteoSunriseSunsetTemplate, {"city_name", "coord_key", "day_idx", "is_sunrise"}),
+        (OpenMeteoSunriseSunsetTemplate, {"city_name", "coord_key", "day_idx"}),
         (OpenMeteoHourlyTimeOfTemplate, {"city_name", "coord_key", "is_max"}),
     ],
 )
@@ -329,7 +329,7 @@ def test_hourly_threshold_uses_jittered_thresholds():
     assert len(thresholds) > 20
 
 
-def test_sunrise_sunset_returns_exact_time(collector):
+def test_daylight_duration_computes_correctly(collector):
     collector._merge_api_data(
         "https://open-meteo.com/en/docs?latitude=35.68&longitude=139.65",
         {
@@ -337,7 +337,7 @@ def test_sunrise_sunset_returns_exact_time(collector):
             "current_weather": {"temperature": 12.5, "time": "2026-03-17T09:00"},
             "daily": {
                 "time": ["2026-03-17", "2026-03-18", "2026-03-19"],
-                "sunrise": ["2026-03-17T06:03", "2026-03-18T06:01", "2026-03-19T05:59"],
+                "sunrise": ["2026-03-17T06:03", "2026-03-18T05:58", "2026-03-19T05:56"],
                 "sunset": ["2026-03-17T18:05", "2026-03-18T18:06", "2026-03-19T18:07"],
             },
         },
@@ -345,54 +345,28 @@ def test_sunrise_sunset_returns_exact_time(collector):
 
     tmpl = OpenMeteoSunriseSunsetTemplate()
 
-    # Sunrise day 0 → "06:03"
+    # Day 0: 06:03 → 18:05 = 12h 2m
     result = run_async(
         tmpl.get_ground_truth({
             "city_name": "Tokyo", "coord_key": "35.68,139.65",
-            "day_idx": 0, "day_label": "today", "is_sunrise": True,
+            "day_idx": 0, "day_label": "today",
         })
     )
     assert result.success is True
-    assert result.value == "06:03"
+    assert result.value == "12h 2m"
 
-    # Sunset day 1 → "18:06"
-    result_ss = run_async(
+    # Day 1: 05:58 → 18:06 = 12h 8m
+    result_d1 = run_async(
         tmpl.get_ground_truth({
             "city_name": "Tokyo", "coord_key": "35.68,139.65",
-            "day_idx": 1, "day_label": "tomorrow", "is_sunrise": False,
+            "day_idx": 1, "day_label": "tomorrow",
         })
     )
-    assert result_ss.success is True
-    assert result_ss.value == "18:06"
+    assert result_d1.success is True
+    assert result_d1.value == "12h 8m"
 
 
-def test_sunrise_sunset_truncates_seconds(collector):
-    """If the API ever returns seconds (e.g. T06:23:45), GT should still be HH:MM."""
-    collector._merge_api_data(
-        "https://open-meteo.com/en/docs?latitude=35.68&longitude=139.65",
-        {
-            "_location_key": "35.68,139.65",
-            "current_weather": {"temperature": 12.5, "time": "2026-03-17T09:00"},
-            "daily": {
-                "time": ["2026-03-17"],
-                "sunrise": ["2026-03-17T06:23:45"],
-                "sunset": ["2026-03-17T18:05:12"],
-            },
-        },
-    )
-
-    tmpl = OpenMeteoSunriseSunsetTemplate()
-    result = run_async(
-        tmpl.get_ground_truth({
-            "city_name": "Tokyo", "coord_key": "35.68,139.65",
-            "day_idx": 0, "day_label": "today", "is_sunrise": True,
-        })
-    )
-    assert result.success is True
-    assert result.value == "06:23"
-
-
-def test_sunrise_sunset_handles_null_polar(collector):
+def test_daylight_duration_handles_null_polar(collector):
     collector._merge_api_data(
         "https://open-meteo.com/en/docs?latitude=68.97&longitude=33.09",
         {
@@ -409,7 +383,7 @@ def test_sunrise_sunset_handles_null_polar(collector):
     result = run_async(
         OpenMeteoSunriseSunsetTemplate().get_ground_truth({
             "city_name": "Murmansk", "coord_key": "68.97,33.09",
-            "day_idx": 0, "day_label": "today", "is_sunrise": True,
+            "day_idx": 0, "day_label": "today",
         })
     )
     assert result.success is False
@@ -466,6 +440,30 @@ def test_hourly_time_of_excludes_temperature():
         assert q.validation_info["metric_field"] != "temperature_2m", (
             f"seed {seed} generated temperature question — should be excluded"
         )
+
+
+def test_hourly_time_of_rejects_degenerate_all_same(collector):
+    """All-zero precip (arid cities) must fail GT, not return 00:00."""
+    collector._merge_api_data(
+        "https://open-meteo.com/en/docs?latitude=33.45&longitude=-112.07",
+        {
+            "_location_key": "33.45,-112.07",
+            "current_weather": {"temperature": 35.0, "time": "2026-03-17T12:00"},
+            "daily": {"time": ["2026-03-17"]},
+            "hourly": {
+                "time": [f"2026-03-17T{h:02d}:00" for h in range(24)],
+                "precipitation_probability": [0] * 24,
+            },
+        },
+    )
+
+    result = run_async(
+        OpenMeteoHourlyTimeOfTemplate().get_ground_truth({
+            "city_name": "Phoenix", "coord_key": "33.45,-112.07",
+            "is_max": True, "metric_field": "precipitation_probability",
+        })
+    )
+    assert result.success is False
 
 
 def test_hourly_threshold_requires_city_visit():
