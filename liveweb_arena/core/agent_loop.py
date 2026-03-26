@@ -79,7 +79,7 @@ class AgentLoop:
 
         # Internal state for partial recovery
         self._trajectory: List[TrajectoryStep] = []
-        self._total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        self._total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "last_call": None}
         self._final_answer = None
 
     def get_trajectory(self) -> List[TrajectoryStep]:
@@ -144,7 +144,7 @@ class AgentLoop:
         """
         # Reset internal state
         self._trajectory = []
-        self._total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        self._total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "last_call": None}
         self._final_answer = None
         self._max_steps_reached = False
         self._parse_failed = False
@@ -216,8 +216,17 @@ class AgentLoop:
                     system_prompt, user_prompt, model, temperature, seed,
                 )
                 if usage:
-                    for key in self._total_usage:
-                        self._total_usage[key] += usage.get(key, 0)
+                    self._total_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
+                    self._total_usage["completion_tokens"] += usage.get("completion_tokens", 0)
+                    # Use API's own total_tokens if present; otherwise compute from components
+                    if "total_tokens" in usage:
+                        self._total_usage["total_tokens"] += usage["total_tokens"]
+                    else:
+                        self._total_usage["total_tokens"] += (
+                            usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
+                        )
+                    # Preserve the raw usage object from the last successful call
+                    self._total_usage["last_call"] = usage
                 consecutive_errors = 0
 
             except Exception as e:
