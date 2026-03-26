@@ -11,10 +11,18 @@ from .multi_condition_filter import HackerNewsMultiConditionFilterTemplate
 from .extrema_comparison import HackerNewsExtremaComparisonTemplate
 from .category_comparison import HackerNewsCategoryComparisonTemplate
 from .news_summary import HackerNewsNewsSummaryTemplate
+from .score_sum import HackerNewsScoreSumTemplate
+from .age_range import HackerNewsAgeRangeTemplate
+from .title_word_count import HackerNewsTitleWordCountTemplate
+from .domain_count import HackerNewsDomainCountTemplate
 
 __all__ = [
     "HackerNewsMultiConditionFilterTemplate",
     "HackerNewsExtremaComparisonTemplate",
     "HackerNewsCategoryComparisonTemplate",
     "HackerNewsNewsSummaryTemplate",
+    "HackerNewsScoreSumTemplate",
+    "HackerNewsAgeRangeTemplate",
+    "HackerNewsTitleWordCountTemplate",
+    "HackerNewsDomainCountTemplate",
 ]
