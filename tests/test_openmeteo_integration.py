@@ -477,6 +477,78 @@ def test_hourly_threshold_requires_city_visit():
     assert result.is_data_not_collected()
 
 
+def test_gt_with_real_api_data(collector):
+    """Verify GT returns concrete values using real Open-Meteo API data (Tokyo, 2026-03-26)."""
+    # Real API response snapshot — fetched from:
+    # https://api.open-meteo.com/v1/forecast?latitude=35.68&longitude=139.65
+    #   &current_weather=true&hourly=temperature_2m,relative_humidity_2m,
+    #   wind_speed_10m,precipitation_probability
+    #   &daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,
+    #   sunrise,sunset&timezone=auto&forecast_days=3
+    real_data = {
+        "_location_key": "35.68,139.65",
+        "current_weather": {"time": "2026-03-26T17:00", "temperature": 11.3, "windspeed": 5.1, "winddirection": 352},
+        "hourly": {
+            "time": [f"2026-03-26T{h:02d}:00" for h in range(24)] + [f"2026-03-27T{h:02d}:00" for h in range(24)],
+            "temperature_2m": [8.4,8.1,8.0,8.6,8.5,8.2,8.5,8.6,8.8,10.1,10.4,10.8,11.7,11.8,11.5,11.2,11.5,11.3,10.8,10.5,10.1,10.0,9.9,9.8,
+                               9.7,9.5,9.3,9.1,8.8,8.6,8.4,8.8,9.7,10.9,12.3,13.5,14.9,15.9,16.3,16.5,16.1,15.3,14.3,12.8,11.8,11.2,10.9,10.7],
+            "relative_humidity_2m": [99,99,99,98,98,98,98,98,98,96,95,94,92,92,91,92,90,90,93,92,95,96,97,96,
+                                     93,93,93,93,94,95,94,91,86,81,76,73,67,61,57,56,59,64,71,83,89,92,92,93],
+            "wind_speed_10m": [2.4,2.4,2.6,3.2,3.2,3.3,4.0,4.7,4.3,4.5,5.4,5.4,4.7,5.9,6.2,6.5,4.3,5.1,4.7,4.7,4.4,4.5,5.2,5.6,
+                               6.2,5.8,5.4,5.1,4.4,4.0,4.1,4.0,4.3,3.6,3.3,3.1,3.8,4.3,4.5,5.1,5.4,4.8,5.6,5.4,4.6,3.9,4.5,3.7],
+            "precipitation_probability": [100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,95,90,85,63,40,20,13,10,
+                                          5,0,3,3,0,0,0,0,0,0,0,0,0,0,0,3,5,20,15,25,23,45,50,53],
+        },
+        "daily": {
+            "time": ["2026-03-26", "2026-03-27", "2026-03-28"],
+            "temperature_2m_max": [11.8, 16.5, 17.8],
+            "temperature_2m_min": [8.0, 8.4, 8.8],
+            "precipitation_probability_max": [100, 53, 63],
+            "sunrise": ["2026-03-26T05:37", "2026-03-27T05:35", "2026-03-28T05:34"],
+            "sunset": ["2026-03-26T17:57", "2026-03-27T17:58", "2026-03-28T17:59"],
+        },
+    }
+
+    collector._merge_api_data(
+        "https://open-meteo.com/en/docs?latitude=35.68&longitude=139.65",
+        real_data,
+    )
+
+    # T99: count hours above 10.0°C today
+    # Today's temps: [8.4,8.1,8.0,8.6,8.5,8.2,8.5,8.6,8.8,10.1,10.4,10.8,11.7,11.8,11.5,11.2,11.5,11.3,10.8,10.5,10.1,10.0,9.9,9.8]
+    # Strictly above 10.0: indices 9-20 minus those <=10.0 → 10.1,10.4,10.8,11.7,11.8,11.5,11.2,11.5,11.3,10.8,10.5,10.1 = 12
+    result_t99 = run_async(
+        OpenMeteoHourlyThresholdTemplate().get_ground_truth({
+            "city_name": "Tokyo", "coord_key": "35.68,139.65",
+            "metric_field": "temperature_2m", "threshold": 10.0, "is_above": True,
+        })
+    )
+    assert result_t99.success is True
+    assert result_t99.value == "12"
+
+    # T100: daylight duration day 0 → sunrise 05:37, sunset 17:57 = 12h 20m
+    result_t100 = run_async(
+        OpenMeteoSunriseSunsetTemplate().get_ground_truth({
+            "city_name": "Tokyo", "coord_key": "35.68,139.65",
+            "day_idx": 0, "day_label": "today",
+        })
+    )
+    assert result_t100.success is True
+    assert result_t100.value == "12h 20m"
+
+    # T101: peak wind speed today
+    # Wind: [2.4,2.4,2.6,3.2,3.2,3.3,4.0,4.7,4.3,4.5,5.4,5.4,4.7,5.9,6.2,6.5,4.3,5.1,4.7,4.7,4.4,4.5,5.2,5.6]
+    # Max = 6.5 at index 15 → 15:00
+    result_t101 = run_async(
+        OpenMeteoHourlyTimeOfTemplate().get_ground_truth({
+            "city_name": "Tokyo", "coord_key": "35.68,139.65",
+            "is_max": True, "metric_field": "wind_speed_10m",
+        })
+    )
+    assert result_t101.success is True
+    assert result_t101.value == "15:00"
+
+
 def test_build_data_html_includes_sunrise_sunset():
     plugin = OpenMeteoPlugin()
     html = plugin._build_data_html({
