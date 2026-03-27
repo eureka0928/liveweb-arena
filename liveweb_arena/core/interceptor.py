@@ -35,7 +35,20 @@ _TRANSPARENT_GIF = (
     b"\x01\x00\x3b"
 )
 
-# Offline stubs: fulfill with empty content instead of abort to avoid JS error/retry
+# Offline / cache-mode stubs for *static* resource types only.
+#
+# We fulfill empty CSS/JS/images/fonts so the document can paint without hitting
+# the network. External script bundles are stubbed, so framework-driven SPAs
+# often never load their main bundles. That is not universal: inline <script>
+# still runs and may start XHR (e.g. Stooq uses timer-based inline pollers).
+# Those handlers typically guard on readyState==4 && status==200; route.abort()
+# does not satisfy that, so the success path does not run — usually a safe no-op.
+#
+# Do NOT apply the same pattern to xhr/fetch: returning HTTP 200 with an empty or
+# placeholder body often runs the client's *success* path (onreadystatechange /
+# .then after ok). That can parse bogus data, corrupt the DOM, and break
+# evaluations that fall back to live DOM when the cached accessibility tree is
+# missing. For xhr/fetch in offline mode we use route.abort().
 _OFFLINE_STUBS = {
     "stylesheet": ("text/css", ""),
     "script": ("application/javascript", ""),
@@ -225,7 +238,7 @@ class CacheInterceptor:
         Pre-fetch caching: on MISS, actively fetches via cache_manager and serves
         via route.fulfill(). The main browser never hits the network for plugin URLs.
         """
-        # Use plugin-specific normalization when possible (e.g. Stooq symbol aliases)
+        # Use plugin-specific normalization when possible (e.g. Stooq: bare symbol aliases)
         plugin = self.plugin_resolver(url) if self.plugin_resolver else None
         normalized = plugin.normalize_url(url) if plugin else normalize_url(url)
         page = self._find_cached_page(url, plugin=plugin)
@@ -260,7 +273,6 @@ class CacheInterceptor:
         # Timeout ensures route completes BEFORE main browser's goto times out (30s),
         # so route.abort() is received by the browser and triggers error detection.
         if self.cache_manager and self.plugin_resolver:
-            plugin = self.plugin_resolver(url)
             if plugin:
                 # Synthetic page: serve directly without any network request.
                 # Used for unknown symbols / error pages to avoid hitting the server.
@@ -336,7 +348,12 @@ class CacheInterceptor:
         await route.continue_()
 
     async def _handle_xhr(self, route: Route, url: str):
-        """Handle XHR/fetch requests."""
+        """Handle XHR/fetch requests.
+
+        Offline/cache mode always aborts (see module comment on _OFFLINE_STUBS).
+        Fulfilling fake 200 + empty JSON is *not* equivalent to abort: success
+        callbacks may parse invalid payloads and mutate the DOM.
+        """
         if self.offline or not self._is_domain_allowed(url):
             self.stats.blocked += 1
             self.stats.blocked_urls.add(url)

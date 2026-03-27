@@ -246,3 +246,60 @@ class TestCacheManagerLoadIfValid:
         mgr = CacheManager(cache_dir=tmp_path, ttl=3600)
         # need_api=True but cache has no api_data → rejected
         assert mgr._load_if_valid(cache_file, need_api=True) is None
+
+    def test_rejects_captcha_cache(self, tmp_path):
+        """CAPTCHA HTML must be rejected and deleted on load."""
+        cache_file = tmp_path / "page.json"
+        page = CachedPage(
+            url="https://taostats.io/subnets/1",
+            html='<html><head><title>Just a moment...</title></head><body>challenge</body></html>',
+            api_data=None, fetched_at=time.time(), need_api=False,
+        )
+        with open(cache_file, "w") as f:
+            json.dump(page.to_dict(), f)
+        mgr = CacheManager(cache_dir=tmp_path, ttl=3600)
+        assert mgr._load_if_valid(cache_file, need_api=False) is None
+        assert not cache_file.exists()
+
+    def test_rejects_short_html_no_api(self, tmp_path):
+        """Trivially short HTML without api_data is garbage — reject and delete."""
+        cache_file = tmp_path / "page.json"
+        page = CachedPage(
+            url="https://stooq.com/q?s=bad",
+            html='<html><head></head><body></body></html>',
+            api_data=None, fetched_at=time.time(), need_api=False,
+        )
+        with open(cache_file, "w") as f:
+            json.dump(page.to_dict(), f)
+        mgr = CacheManager(cache_dir=tmp_path, ttl=3600)
+        assert mgr._load_if_valid(cache_file, need_api=False) is None
+        assert not cache_file.exists()
+
+    def test_keeps_short_html_with_api(self, tmp_path):
+        """Short HTML is fine when api_data provides the real value (e.g. API endpoints)."""
+        cache_file = tmp_path / "page.json"
+        page = CachedPage(
+            url="https://api.taostats.io/subnets",
+            html='<html><head></head><body></body></html>',
+            api_data={"subnets": [1, 2]}, fetched_at=time.time(), need_api=True,
+        )
+        with open(cache_file, "w") as f:
+            json.dump(page.to_dict(), f)
+        mgr = CacheManager(cache_dir=tmp_path, ttl=3600)
+        loaded = mgr._load_if_valid(cache_file, need_api=True)
+        assert loaded is not None
+        assert loaded.api_data == {"subnets": [1, 2]}
+
+    def test_stale_fallback_rejects_captcha(self, tmp_path):
+        """Stale fallback must also reject CAPTCHA — never serve challenge pages."""
+        cache_file = tmp_path / "page.json"
+        page = CachedPage(
+            url="https://taostats.io/subnets/1",
+            html='<html><head><title>Just a moment...</title></head><body></body></html>',
+            api_data=None, fetched_at=1.0, need_api=False,  # expired
+        )
+        with open(cache_file, "w") as f:
+            json.dump(page.to_dict(), f)
+        mgr = CacheManager(cache_dir=tmp_path, ttl=3600)
+        assert mgr._load_stale(cache_file, need_api=False) is None
+        assert not cache_file.exists()

@@ -29,6 +29,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from urllib.parse import unquote, urlparse
 
+from liveweb_arena.core.block_patterns import is_captcha_page
+
 if TYPE_CHECKING:
     from liveweb_arena.plugins.base import BasePlugin
 
@@ -469,6 +471,20 @@ class CacheManager:
             cached = self._load(cache_file)
         except Exception as e:
             logger.warning(f"Failed to load cache {cache_file}: {e}")
+            self._delete_cache(cache_file)
+            return None
+
+        # Content quality: reject CAPTCHA/challenge pages persisted by older code.
+        # Unconditional — a CAPTCHA page is never valid, fresh or stale.
+        if cached.html and is_captcha_page(cached.html, ""):
+            logger.warning(f"CAPTCHA content in cache, deleting: {cache_file}")
+            self._delete_cache(cache_file)
+            return None
+
+        # Reject trivially short HTML when there's no API data to compensate.
+        # API-only pages (e.g. api.taostats.io) legitimately have minimal HTML.
+        if not cached.api_data and cached.html and len(cached.html) < 200:
+            logger.warning(f"Short HTML ({len(cached.html)}B) without api_data, deleting: {cache_file}")
             self._delete_cache(cache_file)
             return None
 

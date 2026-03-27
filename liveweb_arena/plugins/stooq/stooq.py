@@ -89,16 +89,17 @@ class StooqPlugin(BasePlugin):
     def _get_symbol_aliases(self) -> Dict[str, str]:
         """Map bare symbols to their canonical suffixed form.
 
-        E.g. {'aapl': 'aapl.us', 'gc': 'gc.c'}.
-        Symbols that are already canonical (eurusd, ^spx) are not included.
+        Examples:
+            "aapl" -> "aapl.us"
+            "gc"   -> "gc.c"
         """
         if StooqPlugin._symbol_alias_cache is None:
             aliases: Dict[str, str] = {}
             for sym in self._get_known_symbols():
+                # Canonical forms use a suffix (".us", ".c", etc).
                 if "." in sym and not sym.startswith("^"):
                     bare = sym.rsplit(".", 1)[0]
-                    # Only add if bare form differs from canonical
-                    if bare != sym:
+                    if bare and bare != sym:
                         aliases[bare] = sym
             StooqPlugin._symbol_alias_cache = aliases
         return StooqPlugin._symbol_alias_cache
@@ -106,9 +107,9 @@ class StooqPlugin(BasePlugin):
     def normalize_url(self, url: str) -> str:
         """Normalize Stooq URLs so bare and suffixed symbols share one cache key.
 
-        Agents commonly navigate to ?s=aapl instead of ?s=aapl.us.
-        Both refer to the same asset on Stooq. This method canonicalizes
-        the symbol in the URL so the cache stores a single entry per asset.
+        Agents commonly navigate to `?s=aapl` instead of `?s=aapl.us`. Both refer
+        to the same Stooq asset page; we canonicalize the symbol so cache keys
+        don't fragment.
         """
         parsed = urlparse(url)
         if "stooq.com" not in parsed.netloc.lower():
@@ -121,9 +122,12 @@ class StooqPlugin(BasePlugin):
 
         canonical = self._get_symbol_aliases().get(symbol)
         if canonical:
-            # Rebuild URL with canonical symbol
             qs["s"] = [canonical]
-            new_query = urlencode({k: v[0] for k, v in qs.items()}, quote_via=lambda s, *a, **kw: s)
+            # Preserve other query params, but canonicalize the symbol.
+            new_query = urlencode(
+                {k: v[0] for k, v in qs.items()},
+                quote_via=lambda s, *a, **kw: s,
+            )
             url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{new_query}"
 
         return base_normalize_url(url)

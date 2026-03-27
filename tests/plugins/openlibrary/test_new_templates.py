@@ -296,7 +296,9 @@ def test_author_editions_matches_punctuated_author_filter():
     assert result.value == "1000"
 
 
-def test_author_editions_rejects_plain_text_query_without_author_filter():
+def test_author_editions_matches_plain_text_query_via_normalization():
+    """Plain-text queries like 'mark twain' should match when they normalize
+    to the same author fragment as the template's author:\"mark twain\" query."""
     tmpl = OpenLibraryAuthorEditionsTemplate()
     collected = {
         "ol:search:wells": _make_search_entry("mark twain", "editions", [
@@ -309,8 +311,8 @@ def test_author_editions_rejects_plain_text_query_without_author_filter():
         "search_query": 'author:"mark twain"',
         "sort": "editions", "work_count": 2,
     }))
-    assert result.success is False
-    assert result.is_data_not_collected()
+    assert result.success is True
+    assert result.value == "1000"
 
 
 def test_author_editions_not_collected_wrong_author():
