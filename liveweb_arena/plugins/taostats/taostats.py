@@ -13,6 +13,104 @@ from liveweb_arena.plugins.base import BasePlugin
 from .api_client import fetch_single_subnet_data, fetch_homepage_api_data, initialize_cache
 
 
+# JS executed inside setup_page_for_cache to fix AG Grid accessibility.
+#
+# AG Grid sets aria-hidden="true" on its outer wrapper, which causes
+# Playwright's accessibility.snapshot() to skip the entire table subtree.
+#
+# This script:
+#   1. Removes aria-hidden / role="presentation" so the a11y tree includes data.
+#   2. Dynamically discovers columns from .ag-header-cell elements (zero
+#      hardcoded column names — survives website column changes).
+#   3. Merges cells across pinned-left and center containers by row-index.
+#   4. Injects a structured <pre> table BEFORE the grid so it is always
+#      captured by accessibility.snapshot() or innerText fallback.
+#
+# Dependencies: only AG Grid's standard DOM contract —
+#   .ag-header-cell[col-id], .ag-row[row-index], .ag-cell[col-id]
+# These are stable across AG Grid major versions.
+_AG_GRID_FIX_JS = """() => {
+    /* Scope: first AG Grid instance only (ignore deregistration table etc.) */
+    var grid = document.querySelector('.ag-root-wrapper');
+    if (!grid) return;
+
+    /* ---- a11y fix: scoped to the grid and its ancestors ---- */
+    var el = grid;
+    while (el && el !== document.body) {
+        if (el.getAttribute('aria-hidden') === 'true') el.removeAttribute('aria-hidden');
+        if (el.getAttribute('role') === 'presentation') el.removeAttribute('role');
+        el = el.parentElement;
+    }
+    grid.querySelectorAll('[aria-hidden="true"]').forEach(
+        function(n){ n.removeAttribute('aria-hidden'); });
+    grid.querySelectorAll('[role="presentation"]').forEach(
+        function(n){ n.removeAttribute('role'); });
+    grid.querySelectorAll('.ag-overlay').forEach(
+        function(n){ n.remove(); });
+
+    /* ---- discover columns from header cells ---- */
+    var cols = [];
+    var hdr  = {};
+    grid.querySelectorAll('.ag-header-cell').forEach(function(h) {
+        var id   = h.getAttribute('col-id');
+        var text = (h.innerText || '').trim().replace(/\\n/g, ' ');
+        if (id && text && cols.indexOf(id) === -1) {
+            cols.push(id);
+            hdr[id] = text;
+        }
+    });
+    if (cols.length === 0) return;
+
+    /* ---- merge row cells across pinned + center containers ---- */
+    var byIdx = {};
+    grid.querySelectorAll('.ag-row').forEach(function(row) {
+        var idx = row.getAttribute('row-index');
+        if (idx == null) return;
+        if (!byIdx[idx]) byIdx[idx] = {};
+        row.querySelectorAll('.ag-cell').forEach(function(cell) {
+            var id = cell.getAttribute('col-id');
+            if (id && cols.indexOf(id) !== -1) {
+                byIdx[idx][id] = (cell.innerText || '').trim().replace(/\\n/g, ' ');
+            }
+        });
+    });
+    var indices = Object.keys(byIdx).map(Number)
+        .filter(function(n){ return !isNaN(n); })
+        .sort(function(a, b){ return a - b; });
+    if (indices.length === 0) return;
+
+    /* ---- drop columns that are empty in every row (sparklines, icons) ---- */
+    cols = cols.filter(function(c) {
+        for (var i = 0; i < indices.length; i++) {
+            if (byIdx[indices[i]][c]) return true;
+        }
+        return false;
+    });
+    if (cols.length === 0) return;
+
+    /* ---- build markdown table ---- */
+    var headerLine = cols.map(function(c){ return hdr[c]; });
+    var sepLine    = headerLine.map(function(){ return '------'; });
+    var lines = ['| ' + headerLine.join(' | ') + ' |',
+                 '| ' + sepLine.join(' | ') + ' |'];
+    indices.forEach(function(idx) {
+        var r = byIdx[idx];
+        lines.push('| ' + cols.map(function(c){ return r[c] || ''; }).join(' | ') + ' |');
+    });
+
+    /* ---- inject before grid ---- */
+    var pre = document.createElement('pre');
+    pre.id = 'liveweb-extracted-table';
+    pre.setAttribute('aria-label', 'Extracted subnet table data');
+    pre.textContent = lines.join('\\n');
+    if (grid.parentElement) {
+        grid.parentElement.insertBefore(pre, grid);
+    } else {
+        document.body.appendChild(pre);
+    }
+}"""
+
+
 class TaostatsPlugin(BasePlugin):
     """
     Taostats plugin for Bittensor network data.
@@ -117,27 +215,54 @@ class TaostatsPlugin(BasePlugin):
 
     async def setup_page_for_cache(self, page, url: str) -> None:
         """
-        Setup page before caching - click "ALL" to show all subnets.
+        Setup page before caching — handle AG Grid rendering issues.
 
-        On taostats.io/subnets, the default view shows only 10-25 rows.
-        Click "ALL" to show all ~128 subnets for complete visibility.
+        AG Grid on taostats.io has two problems:
+        1. Data loads asynchronously via WebSocket; the grid shows "No Rows To
+           Show" until data arrives.
+        2. The grid root has ``aria-hidden="true"`` and ``role="presentation"``,
+           which causes Playwright's ``accessibility.snapshot()`` to skip the
+           entire table subtree.
+
+        Fix strategy:
+        - Wait for a deterministic data-ready condition (``.ag-row``).
+        - Click "ALL" in the pagination to disable virtual scrolling.
+        - Remove ``aria-hidden`` / ``role="presentation"`` so a11y includes grid.
+        - Inject a structured ``<pre>`` table extracted from the DOM so the agent
+          always receives parseable column–value associations.
         """
         if not self._is_list_page(url):
             return
 
+        # Step 1: Wait for AG Grid data to load (deterministic, not timeout-based)
         try:
-            # Click the "ALL" option in the rows selector
-            # The selector shows: 10, 25, 50, 100, ALL
-            all_button = page.locator('text="ALL"').first
-            if await all_button.is_visible(timeout=3000):
-                await all_button.click()
-                # Wait for table to update with all rows
-                await page.wait_for_timeout(2000)
-                # Wait for network to settle after loading all rows
-                try:
-                    await page.wait_for_load_state("networkidle", timeout=10000)
-                except Exception:
-                    pass
+            await page.wait_for_selector(
+                '.ag-row[row-index="0"]', timeout=15000,
+            )
         except Exception:
-            # If "ALL" button not found or click fails, continue with default view
+            return  # No data rendered — nothing to fix
+
+        # Step 2: Open "Rows: 25" combobox and select "All" to show every row.
+        # The selector is a Radix UI combobox, not a plain <select>.
+        # "All" (title-case) is the option text, NOT "ALL" (upper-case).
+        try:
+            rows_btn = page.locator('button[role="combobox"]:has-text("Rows:")').first
+            if await rows_btn.is_visible(timeout=3000):
+                await rows_btn.click()
+                await page.wait_for_timeout(300)
+                all_option = page.locator('[role="option"]:has-text("All")').first
+                if await all_option.is_visible(timeout=2000):
+                    await all_option.click()
+                    await page.wait_for_timeout(2000)
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=10000)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Step 3: Fix a11y visibility and inject structured table
+        try:
+            await page.evaluate(_AG_GRID_FIX_JS)
+        except Exception:
             pass
