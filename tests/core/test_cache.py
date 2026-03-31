@@ -1,8 +1,10 @@
 """Tests for cache module — CachedPage, normalize_url, url_to_cache_dir, CacheManager helpers."""
 
+import asyncio
 import json
 import time
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -303,3 +305,223 @@ class TestCacheManagerLoadIfValid:
         mgr = CacheManager(cache_dir=tmp_path, ttl=3600)
         assert mgr._load_stale(cache_file, need_api=False) is None
         assert not cache_file.exists()
+
+
+# ── _fetch_page_with_retry ──────────────────────────────────────────
+
+
+class TestFetchPageWithRetry:
+    """Tests for CacheManager._fetch_page_with_retry."""
+
+    def _make_manager(self, tmp_path):
+        mgr = CacheManager(cache_dir=tmp_path, ttl=3600)
+        mgr._PAGE_RETRY_DELAY = 0  # no waiting in tests
+        return mgr
+
+    def test_succeeds_on_first_attempt(self, tmp_path):
+        mgr = self._make_manager(tmp_path)
+        mgr._fetch_page = AsyncMock(return_value=("<html>ok</html>", "tree"))
+        html, tree = asyncio.run(mgr._fetch_page_with_retry("https://x.com"))
+        assert html == "<html>ok</html>"
+        assert mgr._fetch_page.call_count == 1
+
+    def test_retries_on_transient_error(self, tmp_path):
+        mgr = self._make_manager(tmp_path)
+        mgr._fetch_page = AsyncMock(side_effect=[
+            TimeoutError("page.goto timed out"),
+            ("<html>ok</html>", "tree"),
+        ])
+        html, tree = asyncio.run(mgr._fetch_page_with_retry("https://x.com"))
+        assert html == "<html>ok</html>"
+        assert mgr._fetch_page.call_count == 2
+
+    def test_retries_on_http_5xx(self, tmp_path):
+        mgr = self._make_manager(tmp_path)
+        mgr._fetch_page = AsyncMock(side_effect=[
+            CacheFatalError("HTTP 503 for https://arxiv.org/list/cs.AI/new"),
+            ("<html>ok</html>", "tree"),
+        ])
+        html, _ = asyncio.run(mgr._fetch_page_with_retry("https://arxiv.org/list/cs.AI/new"))
+        assert html == "<html>ok</html>"
+        assert mgr._fetch_page.call_count == 2
+
+    def test_retries_on_http_429(self, tmp_path):
+        mgr = self._make_manager(tmp_path)
+        mgr._fetch_page = AsyncMock(side_effect=[
+            CacheFatalError("HTTP 429 for https://arxiv.org/list/cs.AI/new"),
+            ("<html>ok</html>", "tree"),
+        ])
+        html, _ = asyncio.run(mgr._fetch_page_with_retry("https://arxiv.org/list/cs.AI/new"))
+        assert html == "<html>ok</html>"
+        assert mgr._fetch_page.call_count == 2
+
+    def test_does_not_retry_http_404(self, tmp_path):
+        mgr = self._make_manager(tmp_path)
+        mgr._fetch_page = AsyncMock(
+            side_effect=CacheFatalError("HTTP 404 for https://x.com"),
+        )
+        with pytest.raises(CacheFatalError, match="HTTP 404"):
+            asyncio.run(mgr._fetch_page_with_retry("https://x.com"))
+        assert mgr._fetch_page.call_count == 1
+
+    def test_does_not_retry_http_403(self, tmp_path):
+        mgr = self._make_manager(tmp_path)
+        mgr._fetch_page = AsyncMock(
+            side_effect=CacheFatalError("HTTP 403 for https://x.com"),
+        )
+        with pytest.raises(CacheFatalError, match="HTTP 403"):
+            asyncio.run(mgr._fetch_page_with_retry("https://x.com"))
+        assert mgr._fetch_page.call_count == 1
+
+    def test_does_not_retry_captcha(self, tmp_path):
+        mgr = self._make_manager(tmp_path)
+        mgr._fetch_page = AsyncMock(
+            side_effect=CacheFatalError("CAPTCHA/challenge page detected"),
+        )
+        with pytest.raises(CacheFatalError, match="CAPTCHA"):
+            asyncio.run(mgr._fetch_page_with_retry("https://x.com"))
+        assert mgr._fetch_page.call_count == 1
+
+    def test_raises_after_all_retries_exhausted(self, tmp_path):
+        mgr = self._make_manager(tmp_path)
+        mgr._fetch_page = AsyncMock(
+            side_effect=TimeoutError("page.goto timed out"),
+        )
+        with pytest.raises(CacheFatalError, match="Page fetch failed"):
+            asyncio.run(mgr._fetch_page_with_retry("https://x.com"))
+        assert mgr._fetch_page.call_count == mgr._MAX_PAGE_RETRIES
+
+
+# ── _ensure_single fetch strategy ───────────────────────────────────
+
+
+class TestEnsureSingleFetchStrategy:
+    """Tests that _ensure_single picks sequential vs concurrent fetch correctly."""
+
+    def _make_manager(self, tmp_path):
+        mgr = CacheManager(cache_dir=tmp_path, ttl=3600)
+        mgr._PAGE_RETRY_DELAY = 0
+        return mgr
+
+    def test_sequential_when_plugin_overrides_extract(self, tmp_path):
+        """Plugins that override extract_api_data_from_html get sequential
+        fetch — no concurrent API call."""
+        from liveweb_arena.plugins.base import BasePlugin
+
+        class _HtmlExtractPlugin(BasePlugin):
+            name = "test_extract"
+            allowed_domains = ["example.com"]
+
+            def extract_api_data_from_html(self, url, html):
+                return {"extracted": True}
+
+            async def fetch_api_data(self, url):
+                raise AssertionError("should not be called")
+
+        mgr = self._make_manager(tmp_path)
+        mgr._fetch_page = AsyncMock(return_value=("<html>data</html>", "tree"))
+        plugin = _HtmlExtractPlugin()
+
+        cached = asyncio.run(mgr._ensure_single(
+            "https://example.com/page", plugin, need_api=True,
+        ))
+        assert cached.api_data == {"extracted": True}
+
+    def test_falls_back_to_fetch_api_data_when_extract_returns_none(self, tmp_path):
+        """When extract_api_data_from_html is overridden but returns None for
+        a particular URL, fall back to fetch_api_data (honour the contract)."""
+        from liveweb_arena.plugins.base import BasePlugin
+
+        class _PartialExtractPlugin(BasePlugin):
+            name = "test_partial"
+            allowed_domains = ["example.com"]
+
+            def extract_api_data_from_html(self, url, html):
+                # Returns None for this URL — can't extract from HTML
+                return None
+
+            async def fetch_api_data(self, url):
+                return {"fallback": "api_data"}
+
+        mgr = self._make_manager(tmp_path)
+        mgr._fetch_page = AsyncMock(return_value=("<html>page</html>", "tree"))
+        plugin = _PartialExtractPlugin()
+
+        cached = asyncio.run(mgr._ensure_single(
+            "https://example.com/page", plugin, need_api=True,
+        ))
+        assert cached.api_data == {"fallback": "api_data"}
+
+    def test_fallback_fetch_api_data_error_wrapped_as_cache_fatal(self, tmp_path):
+        """When extract returns None and fetch_api_data raises, the error must
+        be wrapped as CacheFatalError so the stale-cache fallback path runs."""
+        from liveweb_arena.plugins.base import BasePlugin
+        from liveweb_arena.plugins.base_client import APIFetchError
+
+        class _FailFallbackPlugin(BasePlugin):
+            name = "test_fail_fallback"
+            allowed_domains = ["example.com"]
+
+            def extract_api_data_from_html(self, url, html):
+                return None  # triggers fallback
+
+            async def fetch_api_data(self, url):
+                raise APIFetchError("service down", source="test")
+
+        mgr = self._make_manager(tmp_path)
+        mgr._fetch_page = AsyncMock(return_value=("<html>page</html>", "tree"))
+        plugin = _FailFallbackPlugin()
+
+        with pytest.raises(CacheFatalError, match="API data fetch failed"):
+            asyncio.run(mgr._ensure_single(
+                "https://example.com/page", plugin, need_api=True,
+            ))
+
+    def test_concurrent_when_plugin_does_not_override_extract(self, tmp_path):
+        """Plugins without extract_api_data_from_html get concurrent
+        page + API fetch (no performance regression)."""
+        from liveweb_arena.plugins.base import BasePlugin
+
+        class _ConcurrentPlugin(BasePlugin):
+            name = "test_concurrent"
+            allowed_domains = ["example.com"]
+
+            async def fetch_api_data(self, url):
+                return {"api": "data"}
+
+        mgr = self._make_manager(tmp_path)
+        mgr._fetch_page = AsyncMock(return_value=("<html>page</html>", "tree"))
+        plugin = _ConcurrentPlugin()
+
+        cached = asyncio.run(mgr._ensure_single(
+            "https://example.com/page", plugin, need_api=True,
+        ))
+        assert cached.api_data == {"api": "data"}
+
+    def test_concurrent_cancels_api_on_page_failure(self, tmp_path):
+        """When page fetch fails in concurrent mode, API task is cancelled."""
+        from liveweb_arena.plugins.base import BasePlugin
+
+        api_called = False
+
+        class _FailPlugin(BasePlugin):
+            name = "test_fail"
+            allowed_domains = ["example.com"]
+
+            async def fetch_api_data(self, url):
+                nonlocal api_called
+                await asyncio.sleep(10)  # would hang if not cancelled
+                api_called = True
+                return {"api": "data"}
+
+        mgr = self._make_manager(tmp_path)
+        mgr._fetch_page = AsyncMock(
+            side_effect=CacheFatalError("HTTP 500 for https://example.com/page"),
+        )
+        plugin = _FailPlugin()
+
+        with pytest.raises(CacheFatalError, match="Page fetch failed"):
+            asyncio.run(mgr._ensure_single(
+                "https://example.com/page", plugin, need_api=True,
+            ))
+        assert not api_called

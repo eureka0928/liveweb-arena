@@ -187,6 +187,24 @@ class BasePlugin(ABC):
         """
         pass
 
+    def extract_api_data_from_html(self, url: str, html: str) -> Optional[Dict[str, Any]]:
+        """
+        Extract API data directly from already-fetched page HTML.
+
+        Override when the API data is parsed from the same page the browser
+        fetches.  Returning a non-None dict lets the cache manager skip
+        the separate ``fetch_api_data`` network call, eliminating duplicate
+        requests to the same URL and reducing rate-limit exposure.
+
+        Args:
+            url: The page URL
+            html: Page HTML already retrieved by the browser
+
+        Returns:
+            API data dict, or None to fall back to ``fetch_api_data``.
+        """
+        return None
+
     async def generate_task(self, seed: int, template_name: str = None, variant: int = None) -> SubTask:
         """
         Generate a task using registered templates.

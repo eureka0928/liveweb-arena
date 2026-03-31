@@ -6,11 +6,11 @@ Supports category listing pages (/list/cs.AI/new).
 """
 
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from liveweb_arena.plugins.base import BasePlugin
-from .api_client import fetch_listing_api_data
+from .api_client import build_listing_api_data, fetch_listing_api_data, parse_listing_html
 
 
 class ArxivPlugin(BasePlugin):
@@ -52,6 +52,20 @@ class ArxivPlugin(BasePlugin):
         path = parsed.path.strip("/")
 
         return bool(self._extract_category(path))
+
+    def extract_api_data_from_html(self, url: str, html: str) -> Optional[Dict[str, Any]]:
+        """Parse GT data from already-fetched listing page HTML.
+
+        ArXiv GT is extracted from the same HTML the browser renders, so
+        there is no need for a separate network request.  This eliminates
+        the redundant concurrent fetch that doubles rate-limit exposure.
+        """
+        parsed = urlparse(url)
+        category = self._extract_category(parsed.path.strip("/"))
+        if not category:
+            return None
+        papers_list = parse_listing_html(html)
+        return build_listing_api_data(category, papers_list)
 
     @staticmethod
     def _extract_category(path: str) -> str:

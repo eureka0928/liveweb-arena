@@ -171,6 +171,9 @@ class ArxivClient(BaseAPIClient):
         session = await _get_session()
         req_timeout = aiohttp.ClientTimeout(total=timeout)
 
+        _RETRYABLE = {429, 500, 502, 503, 504}
+        last_status = None
+
         for attempt in range(cls.MAX_RETRIES):
             await cls._rate_limit()
             try:
@@ -178,22 +181,62 @@ class ArxivClient(BaseAPIClient):
                     if resp.status == 200:
                         text = await resp.text()
                         return parse_listing_html(text)
-                    if resp.status >= 500 and attempt < cls.MAX_RETRIES - 1:
-                        wait = 2 ** attempt
+
+                    last_status = resp.status
+                    if resp.status in _RETRYABLE and attempt < cls.MAX_RETRIES - 1:
+                        # Honour Retry-After header when present
+                        retry_after = resp.headers.get("Retry-After")
+                        wait = int(retry_after) if retry_after else 2 ** attempt
                         logger.info(f"ArXiv listing {resp.status}, retry in {wait}s")
                         await asyncio.sleep(wait)
                         continue
-                    logger.warning(f"ArXiv listing error: status={resp.status}")
-                    return []
+
+                    raise APIFetchError(
+                        f"ArXiv listing HTTP {resp.status} for {url}",
+                        source="arxiv",
+                    )
+            except APIFetchError:
+                raise
             except Exception as e:
                 if attempt < cls.MAX_RETRIES - 1:
                     wait = 2 ** attempt
                     logger.info(f"ArXiv listing failed: {e}, retry in {wait}s")
                     await asyncio.sleep(wait)
                     continue
-                logger.warning(f"ArXiv listing request failed: {e}")
-                return []
-        return []
+                raise APIFetchError(
+                    f"ArXiv listing request failed after {cls.MAX_RETRIES} "
+                    f"attempts: {e}",
+                    source="arxiv",
+                )
+
+        raise APIFetchError(
+            f"ArXiv listing failed: HTTP {last_status} after "
+            f"{cls.MAX_RETRIES} retries",
+            source="arxiv",
+        )
+
+
+def build_listing_api_data(category: str, papers_list: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Build the API data dict from a parsed paper list.
+
+    Raises ``APIFetchError`` when the list is empty (no new submissions).
+    """
+    if not papers_list:
+        raise APIFetchError(
+            f"No new papers on listing page for category '{category}'",
+            source="arxiv",
+        )
+
+    papers = {}
+    for rank, paper in enumerate(papers_list, start=1):
+        arxiv_id = paper["arxiv_id"]
+        papers[arxiv_id] = {**paper, "rank": rank}
+
+    return {
+        "category": category,
+        "paper_count": len(papers),
+        "papers": papers,
+    }
 
 
 async def fetch_listing_api_data(category: str) -> Dict[str, Any]:
@@ -224,20 +267,4 @@ async def fetch_listing_api_data(category: str) -> Dict[str, Any]:
     }
     """
     papers_list = await ArxivClient.fetch_listing(category)
-
-    if not papers_list:
-        raise APIFetchError(
-            f"No new papers on listing page for category '{category}'",
-            source="arxiv",
-        )
-
-    papers = {}
-    for rank, paper in enumerate(papers_list, start=1):
-        arxiv_id = paper["arxiv_id"]
-        papers[arxiv_id] = {**paper, "rank": rank}
-
-    return {
-        "category": category,
-        "paper_count": len(papers),
-        "papers": papers,
-    }
+    return build_listing_api_data(category, papers_list)

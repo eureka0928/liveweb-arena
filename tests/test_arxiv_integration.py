@@ -9,8 +9,9 @@ from liveweb_arena.core.task_registry import TaskRegistry
 from liveweb_arena.core.validators.base import get_registered_templates
 from liveweb_arena.plugins import get_all_plugins
 from liveweb_arena.plugins.base import SubTask
+from liveweb_arena.plugins.base_client import APIFetchError
 from liveweb_arena.plugins.arxiv.arxiv import ArxivPlugin
-from liveweb_arena.plugins.arxiv.api_client import parse_listing_html
+from liveweb_arena.plugins.arxiv.api_client import build_listing_api_data, parse_listing_html
 from liveweb_arena.plugins.arxiv.templates.paper_info import ArxivPaperInfoTemplate
 from liveweb_arena.plugins.arxiv.templates.author_extrema import ArxivAuthorExtremaTemplate
 from liveweb_arena.plugins.arxiv.templates.multi_author_filter import ArxivMultiAuthorFilterTemplate
@@ -1044,3 +1045,67 @@ def test_author_extrema_validation_rules_include_extrema_type():
     })
     assert "fewest" in rules_fewest
     assert "5" in rules_fewest
+
+
+# ---------- extract_api_data_from_html ----------
+
+
+def test_extract_api_data_from_html_parses_listing_page():
+    """Regression: GT can be derived from already-fetched HTML without a
+    separate network request."""
+    plugin = ArxivPlugin()
+    data = plugin.extract_api_data_from_html(
+        "https://arxiv.org/list/cs.AI/new", SAMPLE_LISTING_HTML,
+    )
+    assert data is not None
+    assert data["category"] == "cs.AI"
+    assert data["paper_count"] == 2
+    assert "2603.17021" in data["papers"]
+    assert data["papers"]["2603.17021"]["rank"] == 1
+    assert data["papers"]["2603.17063"]["rank"] == 2
+
+
+def test_extract_api_data_from_html_returns_none_for_non_listing_url():
+    plugin = ArxivPlugin()
+    result = plugin.extract_api_data_from_html(
+        "https://arxiv.org/abs/2603.17021", SAMPLE_LISTING_HTML,
+    )
+    assert result is None
+
+
+def test_extract_api_data_from_html_raises_when_no_new_papers():
+    """Weekend/holiday pages with zero new submissions raise APIFetchError."""
+    plugin = ArxivPlugin()
+    empty_html = "<html><body><h3>No new submissions today</h3></body></html>"
+    with pytest.raises(APIFetchError, match="No new papers"):
+        plugin.extract_api_data_from_html(
+            "https://arxiv.org/list/cs.AI/new", empty_html,
+        )
+
+
+def test_extract_api_data_from_html_handles_recent_url():
+    plugin = ArxivPlugin()
+    data = plugin.extract_api_data_from_html(
+        "https://arxiv.org/list/hep-th/recent", SAMPLE_LISTING_HTML,
+    )
+    assert data is not None
+    assert data["category"] == "hep-th"
+
+
+# ---------- build_listing_api_data ----------
+
+
+def test_build_listing_api_data_assigns_ranks():
+    papers_list = [
+        {"arxiv_id": "2603.00001", "title": "P1", "authors": ["A"]},
+        {"arxiv_id": "2603.00002", "title": "P2", "authors": ["B"]},
+    ]
+    data = build_listing_api_data("cs.AI", papers_list)
+    assert data["paper_count"] == 2
+    assert data["papers"]["2603.00001"]["rank"] == 1
+    assert data["papers"]["2603.00002"]["rank"] == 2
+
+
+def test_build_listing_api_data_raises_on_empty_list():
+    with pytest.raises(APIFetchError, match="No new papers"):
+        build_listing_api_data("cs.AI", [])
