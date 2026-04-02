@@ -430,13 +430,17 @@ class CacheManager:
                         return_when=asyncio.FIRST_EXCEPTION,
                     )
 
-                    # Cancel any still-running task
+                    # Let pending tasks finish naturally rather than
+                    # cancelling — Playwright navigation creates internal
+                    # Futures that raise ERR_ABORTED on cancel, producing
+                    # "Future exception was never retrieved" warnings.
                     for t in pending:
-                        t.cancel()
-                        try:
-                            await t
-                        except (asyncio.CancelledError, Exception):
-                            pass
+                        def _suppress_exc(fut):
+                            try:
+                                fut.exception()
+                            except (asyncio.CancelledError, Exception):
+                                pass
+                        t.add_done_callback(_suppress_exc)
 
                     # Collect results / errors
                     page_error = None
