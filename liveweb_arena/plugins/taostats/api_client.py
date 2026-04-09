@@ -365,7 +365,7 @@ def _sanitize_subnet_names(subnets: dict) -> dict:
 
 
 def _load_file_cache() -> Optional[dict]:
-    """Load subnets from file cache if valid. Returns subnets dict or None."""
+    """Load subnets from file cache if valid (within TTL). Returns subnets dict or None."""
     cache_file = _get_file_cache_path()
     if not cache_file.exists():
         return None
@@ -375,6 +375,21 @@ def _load_file_cache() -> Optional[dict]:
             subnets = cached.get("subnets", {})
             if subnets:
                 return _sanitize_subnet_names(subnets)
+    except Exception:
+        pass
+    return None
+
+
+def _load_file_cache_stale() -> Optional[dict]:
+    """Load subnets from file cache ignoring TTL (fallback when API fails)."""
+    cache_file = _get_file_cache_path()
+    if not cache_file.exists():
+        return None
+    try:
+        cached = json.loads(cache_file.read_text())
+        subnets = cached.get("subnets", {})
+        if subnets:
+            return _sanitize_subnet_names(subnets)
     except Exception:
         pass
     return None
@@ -404,7 +419,7 @@ def _sync_fetch_all_subnets() -> Dict[str, Any]:
                 if not isinstance(subnet, dict):
                     continue
                 try:
-                    normalized = _normalize_subnet(subnet)
+                    normalized = _parse_subnet_data(subnet)
                     netuid = str(normalized.get("netuid", ""))
                     if netuid:
                         subnets[netuid] = normalized
@@ -482,11 +497,22 @@ def initialize_cache():
             return
 
         # 3. Fetch using synchronous urllib (no asyncio, no ThreadPoolExecutor)
-        data = _sync_fetch_all_subnets()
+        try:
+            data = _sync_fetch_all_subnets()
+            subnets = data.get("subnets", {})
+        except Exception as e:
+            log("Taostats", f"Sync fetch failed: {e}")
+            subnets = {}
 
-        subnets = data.get("subnets", {})
         if not subnets:
-            raise APIFetchError("API returned no subnet data", source="taostats")
+            # API failed or returned empty — fall back to stale file cache
+            stale = _load_file_cache_stale()
+            if stale:
+                log("Taostats", f"Using stale cache ({len(stale)} subnets) after API failure")
+                _subnet_cache.set(_filter_by_emission(stale))
+            else:
+                log("Taostats", "No stale cache available, taostats templates will fail")
+            return
 
         # 4. Write file cache
         try:
